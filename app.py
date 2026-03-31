@@ -654,6 +654,241 @@ def api_add_client():
     return jsonify({'id': c.id, 'name': c.name_masked})
 
 
+# ── 每日晨會快報 ─────────────────────────────────────────────────────────────
+@app.route('/briefing')
+@login_required
+def briefing():
+    from datetime import timedelta
+    today = date.today()
+    uid = current_uid()
+
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
+
+    # 即將到期（30天內）
+    expiring = [p for p in active if p.maturity_date and p.days_to_maturity is not None and 0 <= p.days_to_maturity <= 30]
+
+    # 標的異動（漲跌超過3%）+ KO/Strike/EKI 警示
+    alerts = []
+    for p in active:
+        for u in sorted(p.underlyings, key=lambda x: x.position_order or 0):
+            if not u.latest_price or not u.initial_price:
+                continue
+            change_pct = (u.latest_price - u.initial_price) / u.initial_price
+            alert = {
+                'product_code': p.product_code,
+                'ticker': u.ticker,
+                'ticker_name': TICKER_NAME.get(u.ticker, ''),
+                'latest_price': u.latest_price,
+                'price_date': u.price_date,
+                'change_pct': change_pct,
+                'ko_dist': (u.latest_price / u.ko_level - 1) if u.ko_level else None,
+                'strike_dist': (u.latest_price / u.strike_level - 1) if u.strike_level else None,
+                'eki_dist': (u.latest_price / u.eki_level - 1) if u.eki_level else None,
+                'ko_hit': u.ko_hit,
+                'hit_strike': u.strike_level and u.latest_price <= u.strike_level,
+                'hit_eki': u.eki_level and u.latest_price <= u.eki_level,
+            }
+            alerts.append(alert)
+
+    # 市場指標（需付費方案才能抓）
+    market = None
+    try:
+        import yfinance as yf
+        indices = yf.download(['^GSPC', '^IXIC', '^DJI'], period='2d', progress=False)
+        if not indices.empty:
+            close = indices['Close']
+            prev = close.iloc[-2] if len(close) >= 2 else close.iloc[-1]
+            last = close.iloc[-1]
+            market = {
+                'sp500': {'price': round(float(last['^GSPC']), 2), 'chg': round(float((last['^GSPC']/prev['^GSPC']-1)*100), 2)},
+                'nasdaq': {'price': round(float(last['^IXIC']), 2), 'chg': round(float((last['^IXIC']/prev['^IXIC']-1)*100), 2)},
+                'dow': {'price': round(float(last['^DJI']), 2), 'chg': round(float((last['^DJI']/prev['^DJI']-1)*100), 2)},
+            }
+    except:
+        market = None
+
+    # Fear & Greed Index
+    fear_greed = None
+    try:
+        import fear_greed as fg
+        fgi = fg.get()
+        fear_greed = {'score': round(fgi.score), 'rating': fgi.rating}
+    except:
+        try:
+            import requests
+            r = requests.get(f'https://production.dataviz.cnn.io/index/fearandgreed/graphdata/{today.isoformat()}',
+                           headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            if r.ok:
+                data = r.json()
+                if 'fear_and_greed' in data:
+                    fg_data = data['fear_and_greed']
+                    score = fg_data.get('score', 0)
+                    rating = fg_data.get('rating', '')
+                    fear_greed = {'score': round(score), 'rating': rating}
+        except:
+            fear_greed = None
+
+    return render_template('briefing.html', today=today, active=active,
+                           expiring=expiring, alerts=alerts, market=market,
+                           fear_greed=fear_greed)
+
+
+# ── 客戶 PDF 報告 ────────────────────────────────────────────────────────────
+@app.route('/report/<int:cid>')
+@login_required
+def client_report(cid):
+    from fpdf import FPDF
+    from io import BytesIO
+    from flask import send_file
+    import platform
+
+    client = Client.query.get_or_404(cid)
+    positions = [pos for pos in client.positions if pos.product.user_id == current_uid()]
+    today = date.today()
+
+    class PDF(FPDF):
+        def header(self):
+            if self.page_no() > 1:
+                self.set_font('chinese', '', 8)
+                self.cell(0, 5, f'{client.name_masked} - 投資組合報告', align='R')
+                self.ln(8)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('chinese', '', 8)
+            self.set_text_color(150, 150, 150)
+            self.cell(0, 10, f'第 {self.page_no()} 頁', align='C')
+
+    pdf = PDF()
+
+    # 載入中文字型
+    font_path = None
+    if platform.system() == 'Windows':
+        font_path = 'C:/Windows/Fonts/msjh.ttc'
+    else:
+        for p in ['/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+                  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+                  '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+                  '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc']:
+            if os.path.exists(p):
+                font_path = p
+                break
+
+    if font_path and os.path.exists(font_path):
+        pdf.add_font('chinese', '', font_path, uni=True)
+    else:
+        pdf.add_font('chinese', '', uni=True)
+
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+
+    # ── 封面 ──
+    pdf.set_font('chinese', '', 24)
+    pdf.ln(30)
+    pdf.cell(0, 15, '投資組合報告', align='C', new_x='LMARGIN', new_y='NEXT')
+    pdf.ln(5)
+    pdf.set_font('chinese', '', 14)
+    pdf.cell(0, 10, f'客戶：{client.name_masked}', align='C', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(0, 10, f'報告日期：{today.strftime("%Y/%m/%d")}', align='C', new_x='LMARGIN', new_y='NEXT')
+
+    # 持倉摘要
+    active_pos = [pos for pos in positions if pos.product.status == 'active']
+    total_amount = sum(pos.investment_amount or 0 for pos in active_pos)
+    total_monthly = sum(pos.monthly_coupon or 0 for pos in active_pos)
+
+    pdf.ln(15)
+    pdf.set_font('chinese', '', 12)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(0, 10, f'持倉商品數：{len(active_pos)}    總投資金額：USD {total_amount:,.0f}    每月配息：USD {total_monthly:,.0f}',
+             align='C', fill=True, new_x='LMARGIN', new_y='NEXT')
+
+    # ── 持倉明細 ──
+    if active_pos:
+        pdf.add_page()
+        pdf.set_font('chinese', '', 16)
+        pdf.cell(0, 12, '持倉明細', new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(3)
+
+        for pos in active_pos:
+            p = pos.product
+            uls = sorted(p.underlyings, key=lambda u: u.position_order or 0)
+
+            # 商品標題
+            pdf.set_font('chinese', '', 11)
+            pdf.set_fill_color(26, 26, 46)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(0, 8, f'  {p.product_code}  |  {p.issuer or "-"}  |  {p.tenor_months}M  |  {"{:.1%}".format(p.coupon_rate) if p.coupon_rate else "-"}',
+                     fill=True, new_x='LMARGIN', new_y='NEXT')
+            pdf.set_text_color(0, 0, 0)
+
+            # 基本資訊
+            pdf.set_font('chinese', '', 9)
+            days = p.days_to_maturity
+            days_str = f'{days} 天' if days is not None else '-'
+            pdf.cell(0, 6, f'投資金額：USD {pos.investment_amount:,.0f}    月配息：USD {pos.monthly_coupon:,.0f}    到期日：{p.maturity_date.strftime("%Y/%m/%d") if p.maturity_date else "-"}    剩餘：{days_str}',
+                     new_x='LMARGIN', new_y='NEXT')
+
+            # 標的表格
+            pdf.set_font('chinese', '', 8)
+            pdf.set_fill_color(220, 220, 220)
+            col_w = [25, 25, 25, 25, 25, 25, 25, 15]
+            headers = ['標的', '期初價格', 'KO水準', '執行價', 'EKI', '最新價', '距Strike', 'KO']
+            for i, h in enumerate(headers):
+                pdf.cell(col_w[i], 6, h, border=1, fill=True, align='C')
+            pdf.ln()
+
+            for u in uls:
+                strike_dist = ''
+                if u.latest_price and u.strike_level:
+                    dist = (u.latest_price / u.strike_level - 1) * 100
+                    strike_dist = f'{dist:+.1f}%'
+
+                vals = [
+                    u.ticker,
+                    f'{u.initial_price:,.2f}' if u.initial_price else '-',
+                    f'{u.ko_level:,.2f}' if u.ko_level else '-',
+                    f'{u.strike_level:,.2f}' if u.strike_level else '-',
+                    f'{u.eki_level:,.2f}' if u.eki_level else '-',
+                    f'{u.latest_price:,.2f}' if u.latest_price else '-',
+                    strike_dist,
+                    'V' if u.ko_hit else '',
+                ]
+                # 顏色標記
+                for i, v in enumerate(vals):
+                    if i == 6 and strike_dist and dist < 0:
+                        pdf.set_text_color(220, 50, 50)
+                    elif i == 6 and strike_dist and dist > 0:
+                        pdf.set_text_color(39, 174, 96)
+                    pdf.cell(col_w[i], 5, v, border=1, align='C')
+                    pdf.set_text_color(0, 0, 0)
+                pdf.ln()
+
+            pdf.ln(5)
+
+            if pdf.get_y() > 240:
+                pdf.add_page()
+
+    # ── 風險提示 ──
+    pdf.ln(5)
+    pdf.set_font('chinese', '', 7)
+    pdf.set_text_color(150, 150, 150)
+    pdf.multi_cell(0, 4, '免責聲明：本報告僅供參考，不構成投資建議。結構型商品涉及本金風險，投資人應審慎評估自身風險承受能力。')
+
+    buf = BytesIO()
+    pdf.output(buf)
+    buf.seek(0)
+    return send_file(buf, download_name=f'報告_{client.name_masked}_{today.strftime("%Y%m%d")}.pdf',
+                     as_attachment=True, mimetype='application/pdf')
+
+
+# ── 客戶報告列表 ─────────────────────────────────────────────────────────────
+@app.route('/reports')
+@login_required
+def reports():
+    all_clients = Client.query.filter_by(user_id=current_uid()).order_by(Client.name).all()
+    return render_template('reports.html', clients=all_clients)
+
+
 # ── 工具函數 ──────────────────────────────────────────────────────────────────
 def _parse_date(s):
     if not s:

@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">每日晨會快報 <small class="text-muted">{{ today.strftime('%Y/%m/%d') }}</small></h5>
+    <a href="/" class="btn btn-outline-secondary btn-sm">返回總覽</a>
+</div>
+
+<!-- 市場概況 -->
+<div class="row g-3 mb-3">
+    {% if market %}
+    <div class="col-md-3">
+        <div class="card p-3 text-center">
+            <div class="text-muted" style="font-size:0.8rem;">S&P 500</div>
+            <div class="fw-bold" style="font-size:1.3rem;">{{ '{:,.2f}'.format(market.sp500.price) }}</div>
+            <div class="{{ 'text-success' if market.sp500.chg >= 0 else 'text-danger' }}" style="font-size:1rem;">
+                {{ '{:+.2f}%'.format(market.sp500.chg) }}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card p-3 text-center">
+            <div class="text-muted" style="font-size:0.8rem;">NASDAQ</div>
+            <div class="fw-bold" style="font-size:1.3rem;">{{ '{:,.2f}'.format(market.nasdaq.price) }}</div>
+            <div class="{{ 'text-success' if market.nasdaq.chg >= 0 else 'text-danger' }}" style="font-size:1rem;">
+                {{ '{:+.2f}%'.format(market.nasdaq.chg) }}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card p-3 text-center">
+            <div class="text-muted" style="font-size:0.8rem;">Dow Jones</div>
+            <div class="fw-bold" style="font-size:1.3rem;">{{ '{:,.2f}'.format(market.dow.price) }}</div>
+            <div class="{{ 'text-success' if market.dow.chg >= 0 else 'text-danger' }}" style="font-size:1rem;">
+                {{ '{:+.2f}%'.format(market.dow.chg) }}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        {% if fear_greed %}
+        <div class="card p-3 text-center">
+            <div class="text-muted" style="font-size:0.8rem;">Fear & Greed Index</div>
+            <div class="fw-bold" style="font-size:1.3rem;">{{ fear_greed.score }}</div>
+            <div style="font-size:0.85rem;">
+                {% if fear_greed.score <= 25 %}
+                    <span class="badge bg-danger">Extreme Fear</span>
+                {% elif fear_greed.score <= 45 %}
+                    <span class="badge bg-warning text-dark">Fear</span>
+                {% elif fear_greed.score <= 55 %}
+                    <span class="badge bg-secondary">Neutral</span>
+                {% elif fear_greed.score <= 75 %}
+                    <span class="badge bg-success">Greed</span>
+                {% else %}
+                    <span class="badge bg-primary">Extreme Greed</span>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <div class="card p-3 text-center">
+            <div class="text-muted" style="font-size:0.8rem;">Fear & Greed Index</div>
+            <div class="text-muted" style="font-size:0.9rem;">需升級方案</div>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="col-12">
+        <div class="alert alert-info mb-0">市場數據需升級 PythonAnywhere 付費方案才能取得。本機版本可正常顯示。</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- 即將到期 -->
+{% if expiring %}
+<div class="card mb-3 border-warning">
+    <div class="card-header bg-warning text-dark fw-bold py-2">即將到期（30天內）</div>
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+            <thead class="table-light">
+                <tr><th>商品</th><th>到期日</th><th>剩餘天數</th><th>客戶</th><th>金額</th></tr>
+            </thead>
+            <tbody>
+            {% for p in expiring %}
+            <tr>
+                <td class="fw-bold">{{ p.product_code }}</td>
+                <td>{{ p.maturity_date.strftime('%Y/%m/%d') }}</td>
+                <td><span class="badge bg-danger">{{ p.days_to_maturity }} 天</span></td>
+                <td>{% for pos in p.positions %}{{ pos.client.name_masked }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+                <td>{% for pos in p.positions %}USD {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- 標的警示 -->
+<div class="card mb-3">
+    <div class="card-header py-2 fw-bold" style="background:#1a1a2e; color:#fff;">標的監控</div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0" style="font-size:0.88rem;">
+            <thead class="table-light">
+                <tr>
+                    <th>商品</th>
+                    <th>標的</th>
+                    <th class="text-end">最新價</th>
+                    <th class="text-end">距KO</th>
+                    <th class="text-end">距Strike</th>
+                    <th class="text-end">距EKI</th>
+                    <th class="text-center">狀態</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for a in alerts|sort(attribute='strike_dist') %}
+            <tr class="{{ 'table-danger' if a.hit_eki else 'table-warning' if a.hit_strike else '' }}">
+                <td>{{ a.product_code }}</td>
+                <td class="fw-bold">{{ a.ticker }} <small class="text-muted">{{ a.ticker_name }}</small></td>
+                <td class="text-end">{{ '{:,.2f}'.format(a.latest_price) }}
+                    {% if a.price_date %}<small class="text-muted ms-1">{{ a.price_date.strftime('%m/%d') }}</small>{% endif %}
+                </td>
+                <td class="text-end">
+                    {% if a.ko_dist is not none %}
+                        <span class="{{ 'text-success' if a.ko_dist >= 0 else 'text-danger' }}">{{ '{:+.1%}'.format(a.ko_dist) }}</span>
+                    {% else %}-{% endif %}
+                </td>
+                <td class="text-end">
+                    {% if a.strike_dist is not none %}
+                        <span class="{{ 'text-success' if a.strike_dist >= 0 else 'text-danger fw-bold' }}">{{ '{:+.1%}'.format(a.strike_dist) }}</span>
+                    {% else %}-{% endif %}
+                </td>
+                <td class="text-end">
+                    {% if a.eki_dist is not none %}
+                        <span class="{{ 'text-success' if a.eki_dist >= 0 else 'text-danger fw-bold' }}">{{ '{:+.1%}'.format(a.eki_dist) }}</span>
+                    {% else %}-{% endif %}
+                </td>
+                <td class="text-center">
+                    {% if a.hit_eki %}
+                        <span class="badge bg-danger">EKI !</span>
+                    {% elif a.hit_strike %}
+                        <span class="badge bg-warning text-dark">Strike !</span>
+                    {% elif a.ko_hit %}
+                        <span class="badge bg-info">KO</span>
+                    {% else %}
+                        <span class="text-muted">-</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

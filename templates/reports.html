@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">客戶報告</h5>
+</div>
+
+<div class="card p-0">
+    <table class="table table-hover mb-0">
+        <thead class="table-dark">
+            <tr>
+                <th>客戶</th>
+                <th>持倉中</th>
+                <th>總金額</th>
+                <th>每月配息</th>
+                <th class="text-center">操作</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for c in clients %}
+        {% set active_pos = c.positions|selectattr('product.status', 'equalto', 'active')|list %}
+        {% set total = active_pos|sum(attribute='investment_amount') if active_pos else 0 %}
+        <tr>
+            <td class="fw-bold">{{ c.name_masked }}</td>
+            <td>{{ active_pos|length }} 檔</td>
+            <td>USD {{ '{:,.0f}'.format(total) }}</td>
+            <td>USD {{ '{:,.0f}'.format(active_pos|sum(attribute='monthly_coupon')) if active_pos else '-' }}</td>
+            <td class="text-center">
+                {% if active_pos %}
+                <a href="/report/{{ c.id }}" class="btn btn-primary btn-sm">產出 PDF 報告</a>
+                {% else %}
+                <span class="text-muted">無持倉</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
