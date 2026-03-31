@@ -27,6 +27,7 @@ class AppUser(db.Model):
 class Client(db.Model):
     __tablename__ = 'clients'
     id          = db.Column(db.Integer, primary_key=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey('app_users.id'))
     name        = db.Column(db.String(50), nullable=False)       # 何小名
     name_masked = db.Column(db.String(50), nullable=False)       # 何O名
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
@@ -42,7 +43,8 @@ class Client(db.Model):
 class Product(db.Model):
     __tablename__ = 'products'
     id             = db.Column(db.Integer, primary_key=True)
-    product_code   = db.Column(db.String(20), unique=True, nullable=False)
+    user_id        = db.Column(db.Integer, db.ForeignKey('app_users.id'))
+    product_code   = db.Column(db.String(20), nullable=False)
     issuer         = db.Column(db.String(20))
     product_type   = db.Column(db.String(10), default='FCN')
     tenor_months   = db.Column(db.Integer)

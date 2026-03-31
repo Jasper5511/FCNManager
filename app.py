@@ -94,6 +94,10 @@ def inject_globals():
     return {'TICKER_NAME': TICKER_NAME, 'is_admin': session.get('is_admin', False)}
 
 
+def current_uid():
+    return session.get('user_id')
+
+
 # ── 使用者管理（僅管理員）─────────────────────────────────────────────────────
 def admin_required(f):
     @wraps(f)
@@ -313,17 +317,17 @@ def export_excel():
     # Sheet 1: 持倉
     ws1 = wb.active
     ws1.title = '持倉'
-    active = Product.query.filter_by(status='active').order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
     write_sheet(ws1, active)
 
     # Sheet 2: KO
     ws2 = wb.create_sheet('KO')
-    ko = Product.query.filter_by(status='ko_exited').order_by(Product.created_at).all()
+    ko = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at).all()
     write_sheet(ws2, ko, is_ko_sheet=True)
 
     # Sheet 3: 到期
     ws3 = wb.create_sheet('到期')
-    matured = Product.query.filter_by(status='matured').order_by(Product.created_at).all()
+    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at).all()
     write_sheet(ws3, matured)
 
     buf = BytesIO()
@@ -338,7 +342,7 @@ def export_excel():
 @app.route('/')
 @login_required
 def dashboard():
-    active = Product.query.filter_by(status='active').order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
     return render_template('dashboard.html', active=active, today=date.today())
 
 
@@ -346,7 +350,7 @@ def dashboard():
 @app.route('/ko')
 @login_required
 def ko_history():
-    products = Product.query.filter_by(status='ko_exited').order_by(Product.maturity_date.desc()).all()
+    products = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.maturity_date.desc()).all()
     return render_template('ko_history.html', products=products)
 
 
@@ -355,7 +359,7 @@ def ko_history():
 @login_required
 def fetch_prices():
     import yfinance as yf
-    active = Product.query.filter_by(status='active').all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).all()
     tickers = set()
     for p in active:
         for u in p.underlyings:
@@ -409,7 +413,7 @@ def fetch_prices():
 @app.route('/clients')
 @login_required
 def clients():
-    all_clients = Client.query.order_by(Client.name).all()
+    all_clients = Client.query.filter_by(user_id=current_uid()).order_by(Client.name).all()
     return render_template('clients/index.html', clients=all_clients)
 
 
@@ -421,11 +425,11 @@ def add_client():
         if not name:
             flash('請輸入客戶姓名', 'danger')
             return redirect(url_for('add_client'))
-        existing = Client.query.filter_by(name=name).first()
+        existing = Client.query.filter_by(name=name, user_id=current_uid()).first()
         if existing:
             flash('此客戶已存在', 'warning')
             return redirect(url_for('clients'))
-        c = Client(name=name, name_masked=Client.mask_name(name))
+        c = Client(name=name, name_masked=Client.mask_name(name), user_id=current_uid())
         db.session.add(c)
         db.session.commit()
         flash(f'已新增客戶：{name}', 'success')
@@ -450,9 +454,9 @@ def delete_client(cid):
 @app.route('/products')
 @login_required
 def products():
-    active = Product.query.filter_by(status='active').order_by(Product.created_at).all()
-    ko_done = Product.query.filter_by(status='ko_exited').order_by(Product.created_at.desc()).all()
-    matured = Product.query.filter_by(status='matured').order_by(Product.created_at.desc()).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at.desc()).all()
+    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at.desc()).all()
     # 計算持倉總金額
     total_amount = sum(pos.investment_amount or 0 for p in active for pos in p.positions)
     return render_template('products/index.html', active=active, ko_done=ko_done,
@@ -462,11 +466,12 @@ def products():
 @app.route('/products/add', methods=['GET', 'POST'])
 @login_required
 def add_product():
-    clients = Client.query.order_by(Client.name).all()
+    clients = Client.query.filter_by(user_id=current_uid()).order_by(Client.name).all()
     if request.method == 'POST':
         f = request.form
         # 建立商品
         p = Product(
+            user_id       = current_uid(),
             product_code  = f['product_code'].strip(),
             issuer        = f.get('issuer', '').strip(),
             tenor_months  = int(f['tenor_months']) if f.get('tenor_months') else None,
@@ -640,10 +645,10 @@ def api_add_client():
     name = data.get('name', '').strip()
     if not name:
         return jsonify({'error': '請輸入客戶姓名'}), 400
-    existing = Client.query.filter_by(name=name).first()
+    existing = Client.query.filter_by(name=name, user_id=current_uid()).first()
     if existing:
         return jsonify({'id': existing.id, 'name': existing.name_masked})
-    c = Client(name=name, name_masked=Client.mask_name(name))
+    c = Client(name=name, name_masked=Client.mask_name(name), user_id=current_uid())
     db.session.add(c)
     db.session.commit()
     return jsonify({'id': c.id, 'name': c.name_masked})
