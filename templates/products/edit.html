@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block content %}
+<h5 class="mb-3">編輯商品 — {{ product.product_code }}</h5>
+<form method="POST" class="card p-4">
+    <div class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">商品代碼</label>
+            <input name="product_code" class="form-control" required value="{{ product.product_code }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">發行商</label>
+            <select name="issuer" class="form-select">
+                <option value="">-- 選擇 --</option>
+                {% for code, name in [('MS','摩根士丹利'),('BNP','法國巴黎銀行'),('UBS','瑞士銀行'),('SG','法國興業銀行'),('CITI','花旗集團'),('Natixis','法國外貿銀行'),('HSBC','匯豐銀行'),('GS','高盛國際'),('JPM','摩根大通'),('DBS','星展銀行'),('Nomura','野村證券'),('Barclays','巴克萊證券'),('BBVA','西班牙對外銀行'),('CA','東方匯理銀行')] %}
+                <option value="{{ code }}" {{ 'selected' if product.issuer == code else '' }}>{{ code }} - {{ name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Tenor (月)</label>
+            <input name="tenor_months" type="number" class="form-control" value="{{ product.tenor_months or '' }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">幣別</label>
+            <select name="currency" class="form-select">
+                {% for cur in ['USD', 'AUD', 'TWD', 'JPY', 'CNY'] %}
+                <option value="{{ cur }}" {{ 'selected' if product.currency == cur else '' }}>{{ cur }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">年化利率 (%)</label>
+            <input name="coupon_rate" type="number" step="0.01" class="form-control"
+                   value="{{ '{:.2f}'.format(product.coupon_rate * 100) if product.coupon_rate else '' }}">
+        </div>
+    </div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-md-3">
+            <label class="form-label">交易日</label>
+            <input name="trade_date" type="date" class="form-control"
+                   value="{{ product.trade_date.isoformat() if product.trade_date else '' }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">比價日 / 發行日</label>
+            <input name="start_date" type="date" class="form-control"
+                   value="{{ product.start_date.isoformat() if product.start_date else '' }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">期末訂價日</label>
+            <input name="maturity_date" type="date" class="form-control"
+                   value="{{ product.maturity_date.isoformat() if product.maturity_date else '' }}">
+        </div>
+    </div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-md-2">
+            <label class="form-label">KO% (自動出場)</label>
+            <input name="ko_pct" type="number" step="0.01" class="form-control"
+                   value="{{ '{:.2f}'.format(product.ko_pct * 100) if product.ko_pct else '' }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Strike%</label>
+            <input name="strike_pct" type="number" step="0.01" class="form-control"
+                   value="{{ '{:.2f}'.format(product.strike_pct * 100) if product.strike_pct else '' }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">EKI% (留空=無)</label>
+            <input name="eki_pct" type="number" step="0.01" class="form-control"
+                   value="{{ '{:.2f}'.format(product.eki_pct * 100) if product.eki_pct else '' }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">KO 類型</label>
+            <select name="ko_type" class="form-select">
+                <option value="fixed" {{ 'selected' if product.ko_type == 'fixed' else '' }}>Fixed</option>
+                <option value="stepdown" {{ 'selected' if product.ko_type == 'stepdown' else '' }}>Stepdown</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">備注</label>
+            <input name="special_notes" class="form-control" value="{{ product.special_notes or '' }}">
+        </div>
+    </div>
+
+    <hr>
+    <p class="fw-bold mb-2">連結標的</p>
+    <div class="row g-3">
+        {% for i in range(4) %}
+        {% set u = underlyings[i] if i < underlyings|length else None %}
+        <div class="col-md-3">
+            <label class="form-label">標的 {{ i + 1 }}</label>
+            {% if u %}
+            <input type="hidden" name="underlying_id_{{ i + 1 }}" value="{{ u.id }}">
+            {% endif %}
+            <select name="ticker_{{ i + 1 }}" class="form-select">
+                <option value="">-- 選擇 --</option>
+                <optgroup label="半導體">
+                    {% for t, n in [('NVDA','輝達'),('AVGO','博通'),('TSM','台積電'),('AMD','超微'),('MU','美光'),('ARM','安謀'),('QCOM','高通'),('INTC','英特爾')] %}
+                    <option value="{{ t }}" {{ 'selected' if u and u.ticker == t else '' }}>{{ t }} - {{ n }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="科技">
+                    {% for t, n in [('AAPL','蘋果'),('MSFT','微軟'),('GOOG','Google'),('AMZN','亞馬遜'),('META','Meta'),('TSLA','特斯拉'),('ORCL','甲骨文'),('CRM','Salesforce'),('NFLX','Netflix'),('UBER','Uber')] %}
+                    <option value="{{ t }}" {{ 'selected' if u and u.ticker == t else '' }}>{{ t }} - {{ n }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="金融/醫療/其他">
+                    {% for t, n in [('UNH','聯合健康'),('JPM','摩根大通'),('GS','高盛'),('BA','波音'),('AAL','美國航空'),('AA','美國鋁業'),('NKE','Nike'),('COIN','Coinbase')] %}
+                    <option value="{{ t }}" {{ 'selected' if u and u.ticker == t else '' }}>{{ t }} - {{ n }}</option>
+                    {% endfor %}
+                </optgroup>
+            </select>
+            <input name="init_price_{{ i + 1 }}" type="number" step="0.0001" class="form-control mt-1"
+                   placeholder="期初價格" value="{{ u.initial_price if u and u.initial_price else '' }}">
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="mt-4">
+        <button type="submit" class="btn btn-primary">儲存變更</button>
+        <a href="{{ url_for('ko_history') if product.status == 'ko_exited' else url_for('product_detail', pid=product.id) }}" class="btn btn-secondary ms-2">取消</a>
+    </div>
+</form>
+{% endblock %}

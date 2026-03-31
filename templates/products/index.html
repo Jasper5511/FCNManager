@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">所有商品</h5>
+    <a href="/products/add" class="btn btn-primary btn-sm">+ 新增商品</a>
+</div>
+
+<!-- 持倉中 -->
+<p class="section-title">持倉中 <span class="text-muted" style="font-size:0.85rem;">管理總金額：USD {{ '{:,.0f}'.format(total_amount) }}</span></p>
+<div class="card p-0 mb-4">
+    <table class="table table-hover mb-0">
+        <thead class="table-dark">
+            <tr>
+                <th>商品代碼</th>
+                <th>發行商</th>
+                <th>Tenor</th>
+                <th>年利率</th>
+                <th>標的</th>
+                <th>客戶</th>
+                <th class="text-end">投資金額</th>
+                <th>到期日</th>
+                <th>剩餘天數</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in active %}
+            {% set positions = p.positions %}
+            {% set row_count = positions|length if positions|length > 0 else 1 %}
+            {% for pos in positions %}
+            <tr>
+                {% if loop.first %}
+                <td rowspan="{{ row_count }}"><a href="/products/{{ p.id }}" class="fw-bold text-decoration-none">{{ p.product_code }}</a></td>
+                <td rowspan="{{ row_count }}">{{ p.issuer or '-' }}</td>
+                <td rowspan="{{ row_count }}">{{ p.tenor_months }}M</td>
+                <td rowspan="{{ row_count }}">{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '-' }}</td>
+                <td rowspan="{{ row_count }}">{% for u in p.underlyings|sort(attribute='position_order') %}{{ u.ticker }}{% if not loop.last %} / {% endif %}{% endfor %}</td>
+                {% endif %}
+                <td>{{ pos.client.name_masked }}</td>
+                <td class="text-end">{{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}</td>
+                {% if loop.first %}
+                <td rowspan="{{ row_count }}">{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</td>
+                <td rowspan="{{ row_count }}">
+                    {% set d = p.days_to_maturity %}
+                    {% if d is not none %}
+                        <span class="{{ 'days-danger' if d < 30 else 'days-warning' if d < 90 else 'days-ok' }}">{{ d }} 天</span>
+                    {% else %}-{% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            {% if not positions %}
+            <tr>
+                <td><a href="/products/{{ p.id }}" class="fw-bold text-decoration-none">{{ p.product_code }}</a></td>
+                <td>{{ p.issuer or '-' }}</td>
+                <td>{{ p.tenor_months }}M</td>
+                <td>{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '-' }}</td>
+                <td>{% for u in p.underlyings|sort(attribute='position_order') %}{{ u.ticker }}{% if not loop.last %} / {% endif %}{% endfor %}</td>
+                <td colspan="2" class="text-muted">-</td>
+                <td>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</td>
+                <td>
+                    {% set d = p.days_to_maturity %}
+                    {% if d is not none %}
+                        <span class="{{ 'days-danger' if d < 30 else 'days-warning' if d < 90 else 'days-ok' }}">{{ d }} 天</span>
+                    {% else %}-{% endif %}
+                </td>
+            </tr>
+            {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- 已出場 (KO) -->
+{% if ko_done %}
+<p class="section-title">已出場 (KO)</p>
+<div class="card p-0 mb-4">
+    <table class="table table-hover mb-0">
+        <thead class="table-secondary">
+            <tr>
+                <th>商品代碼</th>
+                <th>發行商</th>
+                <th>Tenor</th>
+                <th>年利率</th>
+                <th>標的</th>
+                <th>客戶</th>
+                <th>到期日</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in ko_done %}
+            {% for pos in p.positions %}
+            <tr>
+                {% if loop.first %}
+                <td rowspan="{{ p.positions|length }}"><a href="/products/{{ p.id }}" class="text-decoration-none">{{ p.product_code }}</a></td>
+                <td rowspan="{{ p.positions|length }}">{{ p.issuer or '-' }}</td>
+                <td rowspan="{{ p.positions|length }}">{{ p.tenor_months }}M</td>
+                <td rowspan="{{ p.positions|length }}">{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '-' }}</td>
+                <td rowspan="{{ p.positions|length }}">{% for u in p.underlyings|sort(attribute='position_order') %}{{ u.ticker }}{% if not loop.last %} / {% endif %}{% endfor %}</td>
+                {% endif %}
+                <td>{{ pos.client.name_masked }}</td>
+                {% if loop.first %}
+                <td rowspan="{{ p.positions|length }}">{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}

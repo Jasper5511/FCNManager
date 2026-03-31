@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+<h5 class="mb-3">新增客戶</h5>
+<form method="POST" class="card p-4" style="max-width: 400px">
+    <label class="form-label">客戶姓名</label>
+    <input name="name" class="form-control mb-3" required placeholder="例：何小名">
+    <button type="submit" class="btn btn-primary">新增</button>
+    <a href="/clients" class="btn btn-secondary ms-2">取消</a>
+</form>
+{% endblock %}

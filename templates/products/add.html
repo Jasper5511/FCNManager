@@ -1,0 +1,209 @@
+{% extends 'base.html' %}
+{% block content %}
+<h5 class="mb-3">新增商品</h5>
+<form method="POST" class="card p-4">
+    <div class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">商品代碼</label>
+            <input name="product_code" class="form-control" required placeholder="2026SN1072">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">發行商</label>
+            <select name="issuer" class="form-select">
+                <option value="">-- 選擇 --</option>
+                <option value="MS">MS - 摩根士丹利</option>
+                <option value="BNP">BNP - 法國巴黎銀行</option>
+                <option value="UBS">UBS - 瑞士銀行</option>
+                <option value="SG">SG - 法國興業銀行</option>
+                <option value="CITI">CITI - 花旗集團</option>
+                <option value="Natixis">Natixis - 法國外貿銀行</option>
+                <option value="HSBC">HSBC - 匯豐銀行</option>
+                <option value="GS">GS - 高盛國際</option>
+                <option value="JPM">JPM - 摩根大通</option>
+                <option value="DBS">DBS - 星展銀行</option>
+                <option value="Nomura">Nomura - 野村證券</option>
+                <option value="Barclays">Barclays - 巴克萊證券</option>
+                <option value="BBVA">BBVA - 西班牙對外銀行</option>
+                <option value="CA">CA - 東方匯理銀行</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Tenor (月)</label>
+            <input name="tenor_months" type="number" class="form-control" placeholder="6">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">幣別</label>
+            <select name="currency" class="form-select">
+                <option value="USD" selected>USD</option>
+                <option value="AUD">AUD</option>
+                <option value="TWD">TWD</option>
+                <option value="JPY">JPY</option>
+                <option value="CNY">CNY</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">年化利率 (%)</label>
+            <input name="coupon_rate" type="number" step="0.01" class="form-control" placeholder="12">
+        </div>
+    </div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-md-3">
+            <label class="form-label">交易日</label>
+            <input name="trade_date" type="date" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">比價日 / 發行日</label>
+            <input name="start_date" type="date" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">期末訂價日</label>
+            <input name="maturity_date" type="date" class="form-control">
+        </div>
+    </div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-md-2">
+            <label class="form-label">KO% (自動出場)</label>
+            <input name="ko_pct" type="number" step="0.01" class="form-control" placeholder="100">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Strike%</label>
+            <input name="strike_pct" type="number" step="0.01" class="form-control" placeholder="70">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">EKI% (留空=無)</label>
+            <input name="eki_pct" type="number" step="0.01" class="form-control" placeholder="60">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">KO 類型</label>
+            <select name="ko_type" class="form-select">
+                <option value="fixed">Fixed</option>
+                <option value="stepdown">Stepdown</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">備注</label>
+            <input name="special_notes" class="form-control" placeholder="stepdown 3%, AUD...">
+        </div>
+    </div>
+
+    <hr>
+    <p class="fw-bold mb-2">連結標的</p>
+    <div class="row g-3">
+        {% for i in range(1, 5) %}
+        <div class="col-md-3">
+            <label class="form-label">標的 {{ i }}</label>
+            <select name="ticker_{{ i }}" class="form-select">
+                <option value="">-- 選擇 --</option>
+                <optgroup label="半導體">
+                    <option value="NVDA">NVDA - 輝達</option>
+                    <option value="AVGO">AVGO - 博通</option>
+                    <option value="TSM">TSM - 台積電</option>
+                    <option value="AMD">AMD - 超微</option>
+                    <option value="MU">MU - 美光</option>
+                    <option value="ARM">ARM - 安謀</option>
+                    <option value="QCOM">QCOM - 高通</option>
+                    <option value="INTC">INTC - 英特爾</option>
+                </optgroup>
+                <optgroup label="科技">
+                    <option value="AAPL">AAPL - 蘋果</option>
+                    <option value="MSFT">MSFT - 微軟</option>
+                    <option value="GOOG">GOOG - Google</option>
+                    <option value="AMZN">AMZN - 亞馬遜</option>
+                    <option value="META">META - Meta</option>
+                    <option value="TSLA">TSLA - 特斯拉</option>
+                    <option value="ORCL">ORCL - 甲骨文</option>
+                    <option value="CRM">CRM - Salesforce</option>
+                    <option value="NFLX">NFLX - Netflix</option>
+                    <option value="UBER">UBER - Uber</option>
+                </optgroup>
+                <optgroup label="金融/醫療/其他">
+                    <option value="UNH">UNH - 聯合健康</option>
+                    <option value="JPM">JPM - 摩根大通</option>
+                    <option value="GS">GS - 高盛</option>
+                    <option value="BA">BA - 波音</option>
+                    <option value="AAL">AAL - 美國航空</option>
+                    <option value="AA">AA - 美國鋁業</option>
+                    <option value="NKE">NKE - Nike</option>
+                    <option value="COIN">COIN - Coinbase</option>
+                </optgroup>
+            </select>
+            <input name="init_price_{{ i }}" type="number" step="0.0001" class="form-control mt-1" placeholder="期初價格">
+        </div>
+        {% endfor %}
+    </div>
+
+    <hr>
+    <p class="fw-bold mb-2">客戶部位 (第一筆)</p>
+    <div class="row g-3">
+        <div class="col-md-3">
+            <label class="form-label">客戶</label>
+            <div class="d-flex">
+                <select name="client_id" id="client_select" class="form-select me-2">
+                    <option value="">-- 選擇客戶 --</option>
+                    {% for c in clients %}
+                    <option value="{{ c.id }}">{{ c.name_masked }}</option>
+                    {% endfor %}
+                </select>
+                <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#newClientModal" style="white-space:nowrap">+ 新增</button>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">投資金額</label>
+            <input name="investment_amount" type="number" step="1" class="form-control" placeholder="100000">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">備注</label>
+            <input name="pos_notes" class="form-control">
+        </div>
+    </div>
+
+    <!-- 新增客戶 Modal -->
+    <div class="modal fade" id="newClientModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="modal-title">新增客戶</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input id="new_client_name" class="form-control" placeholder="輸入客戶全名">
+                </div>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-primary btn-sm" id="save_new_client">新增</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <button type="submit" class="btn btn-primary">新增商品</button>
+        <a href="/" class="btn btn-secondary ms-2">取消</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('save_new_client').addEventListener('click', async () => {
+    const name = document.getElementById('new_client_name').value.trim();
+    if (!name) { alert('請輸入客戶姓名'); return; }
+    const res = await fetch('/api/clients', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name})
+    });
+    const data = await res.json();
+    if (data.id) {
+        const sel = document.getElementById('client_select');
+        const opt = new Option(data.name, data.id, true, true);
+        sel.add(opt);
+        document.getElementById('new_client_name').value = '';
+        bootstrap.Modal.getInstance(document.getElementById('newClientModal')).hide();
+    } else {
+        alert(data.error || '新增失敗');
+    }
+});
+</script>
+{% endblock %}
