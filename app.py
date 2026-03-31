@@ -1,7 +1,8 @@
 import sys, io, os
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from functools import wraps
 from models import db, Client, Product, Underlying, Position, PriceHistory
 from config import config
 from datetime import date
@@ -17,6 +18,37 @@ db.init_app(app)
 
 with app.app_context():
     db.create_all()
+
+# ── 登入驗證 ─────────────────────────────────────────────────────────────────
+APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
+APP_PASSWORD = os.environ.get('APP_PASSWORD', 'fcn2026')
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        if (request.form['username'] == APP_USERNAME and
+                request.form['password'] == APP_PASSWORD):
+            session['logged_in'] = True
+            return redirect(url_for('dashboard'))
+        flash('帳號或密碼錯誤', 'danger')
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
 
 TICKER_NAME = {
     'NVDA': '輝達', 'AVGO': '博通', 'TSM': '台積電', 'AMD': '超微',
@@ -35,6 +67,7 @@ def inject_ticker_name():
 
 # ── 匯出 Excel ───────────────────────────────────────────────────────────────
 @app.route('/export_excel')
+@login_required
 def export_excel():
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -206,6 +239,7 @@ def export_excel():
 
 # ── 首頁：持倉總覽 ────────────────────────────────────────────────────────────
 @app.route('/')
+@login_required
 def dashboard():
     active = Product.query.filter_by(status='active').order_by(Product.created_at).all()
     return render_template('dashboard.html', active=active, today=date.today())
@@ -213,6 +247,7 @@ def dashboard():
 
 # ── 已出場(KO)頁面 ───────────────────────────────────────────────────────────
 @app.route('/ko')
+@login_required
 def ko_history():
     products = Product.query.filter_by(status='ko_exited').order_by(Product.maturity_date.desc()).all()
     return render_template('ko_history.html', products=products)
@@ -220,6 +255,7 @@ def ko_history():
 
 # ── 更新收盤價 ────────────────────────────────────────────────────────────────
 @app.route('/fetch_prices')
+@login_required
 def fetch_prices():
     import yfinance as yf
     active = Product.query.filter_by(status='active').all()
@@ -274,12 +310,14 @@ def fetch_prices():
 
 # ── 客戶管理 ──────────────────────────────────────────────────────────────────
 @app.route('/clients')
+@login_required
 def clients():
     all_clients = Client.query.order_by(Client.name).all()
     return render_template('clients/index.html', clients=all_clients)
 
 
 @app.route('/clients/add', methods=['GET', 'POST'])
+@login_required
 def add_client():
     if request.method == 'POST':
         name = request.form['name'].strip()
@@ -299,6 +337,7 @@ def add_client():
 
 
 @app.route('/clients/<int:cid>/delete', methods=['POST'])
+@login_required
 def delete_client(cid):
     c = Client.query.get_or_404(cid)
     if c.positions:
@@ -312,6 +351,7 @@ def delete_client(cid):
 
 # ── 商品管理 ──────────────────────────────────────────────────────────────────
 @app.route('/products')
+@login_required
 def products():
     active = Product.query.filter_by(status='active').order_by(Product.created_at).all()
     ko_done = Product.query.filter_by(status='ko_exited').order_by(Product.created_at.desc()).all()
@@ -323,6 +363,7 @@ def products():
 
 
 @app.route('/products/add', methods=['GET', 'POST'])
+@login_required
 def add_product():
     clients = Client.query.order_by(Client.name).all()
     if request.method == 'POST':
@@ -385,12 +426,14 @@ def add_product():
 
 
 @app.route('/products/<int:pid>')
+@login_required
 def product_detail(pid):
     p = Product.query.get_or_404(pid)
     return render_template('products/detail.html', product=p, today=date.today())
 
 
 @app.route('/products/<int:pid>/ko_exit', methods=['POST'])
+@login_required
 def ko_exit(pid):
     p = Product.query.get_or_404(pid)
     p.status = 'ko_exited'
@@ -400,6 +443,7 @@ def ko_exit(pid):
 
 
 @app.route('/products/<int:pid>/reactivate', methods=['POST'])
+@login_required
 def reactivate(pid):
     p = Product.query.get_or_404(pid)
     p.status = 'active'
@@ -409,6 +453,7 @@ def reactivate(pid):
 
 
 @app.route('/products/<int:pid>/toggle_ko/<int:uid>', methods=['POST'])
+@login_required
 def toggle_ko(pid, uid):
     u = Underlying.query.get_or_404(uid)
     u.ko_hit = not u.ko_hit
@@ -418,6 +463,7 @@ def toggle_ko(pid, uid):
 
 # ── 編輯商品 ─────────────────────────────────────────────────────────────────
 @app.route('/products/<int:pid>/edit', methods=['GET', 'POST'])
+@login_required
 def edit_product(pid):
     p = Product.query.get_or_404(pid)
     if request.method == 'POST':
@@ -474,6 +520,7 @@ def edit_product(pid):
 
 # ── 部位管理（多客戶同一商品）────────────────────────────────────────────────
 @app.route('/products/<int:pid>/add_position', methods=['POST'])
+@login_required
 def add_position(pid):
     f = request.form
     pos = Position(
@@ -490,6 +537,7 @@ def add_position(pid):
 
 # ── API：新增客戶（AJAX）─────────────────────────────────────────────────────
 @app.route('/api/clients', methods=['POST'])
+@login_required
 def api_add_client():
     data = request.get_json()
     name = data.get('name', '').strip()
