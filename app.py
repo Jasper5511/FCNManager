@@ -22,7 +22,7 @@ with app.app_context():
 # ── 初始化預設帳號 ────────────────────────────────────────────────────────────
 with app.app_context():
     if not AppUser.query.first():
-        u = AppUser(username='admin')
+        u = AppUser(username='admin', role='admin')
         u.set_password('fcn2026')
         db.session.add(u)
         db.session.commit()
@@ -44,6 +44,8 @@ def login():
         user = AppUser.query.filter_by(username=request.form['username']).first()
         if user and user.check_password(request.form['password']):
             session['logged_in'] = True
+            session['user_id'] = user.id
+            session['is_admin'] = user.is_admin
             return redirect(url_for('dashboard'))
         flash('帳號或密碼錯誤', 'danger')
     return render_template('login.html')
@@ -59,7 +61,7 @@ def logout():
 @login_required
 def change_password():
     if request.method == 'POST':
-        user = AppUser.query.first()
+        user = AppUser.query.get(session['user_id'])
         old_pw = request.form['old_password']
         new_pw = request.form['new_password']
         confirm_pw = request.form['confirm_password']
@@ -88,8 +90,76 @@ TICKER_NAME = {
 }
 
 @app.context_processor
-def inject_ticker_name():
-    return {'TICKER_NAME': TICKER_NAME}
+def inject_globals():
+    return {'TICKER_NAME': TICKER_NAME, 'is_admin': session.get('is_admin', False)}
+
+
+# ── 使用者管理（僅管理員）─────────────────────────────────────────────────────
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('is_admin'):
+            flash('需要管理員權限', 'danger')
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/users')
+@login_required
+@admin_required
+def users():
+    all_users = AppUser.query.order_by(AppUser.created_at).all()
+    return render_template('users.html', users=all_users)
+
+
+@app.route('/users/add', methods=['POST'])
+@login_required
+@admin_required
+def add_user():
+    username = request.form['username'].strip()
+    password = request.form['password'].strip()
+    if not username or not password:
+        flash('帳號和密碼不可空白', 'danger')
+        return redirect(url_for('users'))
+    if AppUser.query.filter_by(username=username).first():
+        flash('此帳號已存在', 'warning')
+        return redirect(url_for('users'))
+    u = AppUser(username=username, role='user')
+    u.set_password(password)
+    db.session.add(u)
+    db.session.commit()
+    flash(f'已新增使用者：{username}', 'success')
+    return redirect(url_for('users'))
+
+
+@app.route('/users/<int:uid>/delete', methods=['POST'])
+@login_required
+@admin_required
+def delete_user(uid):
+    u = AppUser.query.get_or_404(uid)
+    if u.is_admin:
+        flash('無法刪除管理員帳號', 'danger')
+    else:
+        db.session.delete(u)
+        db.session.commit()
+        flash(f'已刪除使用者：{u.username}', 'success')
+    return redirect(url_for('users'))
+
+
+@app.route('/users/<int:uid>/reset', methods=['POST'])
+@login_required
+@admin_required
+def reset_user_password(uid):
+    u = AppUser.query.get_or_404(uid)
+    new_pw = request.form['new_password'].strip()
+    if not new_pw:
+        flash('密碼不可空白', 'danger')
+    else:
+        u.set_password(new_pw)
+        db.session.commit()
+        flash(f'已重設 {u.username} 的密碼', 'success')
+    return redirect(url_for('users'))
 
 
 # ── 匯出 Excel ───────────────────────────────────────────────────────────────

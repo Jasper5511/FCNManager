@@ -34,6 +34,7 @@
             <a href="/products" class="btn btn-outline-light btn-sm me-1">所有商品</a>
             <a href="/clients" class="btn btn-outline-light btn-sm me-1">客戶</a>
             <a href="/export_excel" class="btn btn-outline-success btn-sm me-1">匯出 Excel</a>
+            {% if is_admin %}<a href="/users" class="btn btn-outline-info btn-sm me-1">使用者管理</a>{% endif %}
             <a href="/change_password" class="btn btn-outline-light btn-sm me-1">改密碼</a>
             <a href="/logout" class="btn btn-outline-danger btn-sm">登出</a>
         </div>
