@@ -1,7 +1,21 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, date
+from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
+
+
+class AppUser(db.Model):
+    __tablename__ = 'app_users'
+    id       = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+
+    def set_password(self, pw):
+        self.password = generate_password_hash(pw)
+
+    def check_password(self, pw):
+        return check_password_hash(self.password, pw)
 
 
 class Client(db.Model):

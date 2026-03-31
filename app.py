@@ -3,7 +3,7 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from functools import wraps
-from models import db, Client, Product, Underlying, Position, PriceHistory
+from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser
 from config import config
 from datetime import date
 from dotenv import load_dotenv
@@ -19,11 +19,16 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
+# ── 初始化預設帳號 ────────────────────────────────────────────────────────────
+with app.app_context():
+    if not AppUser.query.first():
+        u = AppUser(username='admin')
+        u.set_password('fcn2026')
+        db.session.add(u)
+        db.session.commit()
+
+
 # ── 登入驗證 ─────────────────────────────────────────────────────────────────
-APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
-APP_PASSWORD = os.environ.get('APP_PASSWORD', 'fcn2026')
-
-
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -36,8 +41,8 @@ def login_required(f):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if (request.form['username'] == APP_USERNAME and
-                request.form['password'] == APP_PASSWORD):
+        user = AppUser.query.filter_by(username=request.form['username']).first()
+        if user and user.check_password(request.form['password']):
             session['logged_in'] = True
             return redirect(url_for('dashboard'))
         flash('帳號或密碼錯誤', 'danger')
@@ -48,6 +53,28 @@ def login():
 def logout():
     session.pop('logged_in', None)
     return redirect(url_for('login'))
+
+
+@app.route('/change_password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        user = AppUser.query.first()
+        old_pw = request.form['old_password']
+        new_pw = request.form['new_password']
+        confirm_pw = request.form['confirm_password']
+        if not user.check_password(old_pw):
+            flash('舊密碼錯誤', 'danger')
+        elif new_pw != confirm_pw:
+            flash('新密碼與確認密碼不一致', 'danger')
+        elif len(new_pw) < 4:
+            flash('密碼至少 4 個字元', 'danger')
+        else:
+            user.set_password(new_pw)
+            db.session.commit()
+            flash('密碼已更新', 'success')
+            return redirect(url_for('dashboard'))
+    return render_template('change_password.html')
 
 
 TICKER_NAME = {
