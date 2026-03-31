@@ -742,6 +742,12 @@ def client_report(cid):
     from flask import send_file
     import platform
 
+    import tempfile
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+
     client = Client.query.get_or_404(cid)
     positions = [pos for pos in client.positions if pos.product.user_id == current_uid()]
     today = date.today()
@@ -750,7 +756,7 @@ def client_report(cid):
         def header(self):
             if self.page_no() > 1:
                 self.set_font('chinese', '', 8)
-                self.cell(0, 5, f'{client.name_masked} - 投資組合報告', align='R')
+                self.cell(0, 5, '持倉追蹤報告', align='R')
                 self.ln(8)
 
         def footer(self):
@@ -785,10 +791,9 @@ def client_report(cid):
     # ── 封面 ──
     pdf.set_font('chinese', '', 24)
     pdf.ln(30)
-    pdf.cell(0, 15, '投資組合報告', align='C', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(0, 15, '持倉追蹤報告', align='C', new_x='LMARGIN', new_y='NEXT')
     pdf.ln(5)
     pdf.set_font('chinese', '', 14)
-    pdf.cell(0, 10, f'客戶：{client.name_masked}', align='C', new_x='LMARGIN', new_y='NEXT')
     pdf.cell(0, 10, f'報告日期：{today.strftime("%Y/%m/%d")}', align='C', new_x='LMARGIN', new_y='NEXT')
 
     # 持倉摘要
@@ -802,7 +807,60 @@ def client_report(cid):
     pdf.cell(0, 10, f'持倉商品數：{len(active_pos)}    總投資金額：USD {total_amount:,.0f}    每月配息：USD {total_monthly:,.0f}',
              align='C', fill=True, new_x='LMARGIN', new_y='NEXT')
 
-    # ── 持倉明細 ──
+    # ── 圖表產生函數 ──
+    def make_chart(ticker_symbol, product_code, ko_level, strike_level, eki_level):
+        try:
+            import yfinance as yf
+            from datetime import timedelta
+            start = (today - timedelta(days=365)).isoformat()
+            data = yf.download(ticker_symbol, start=start, end=today.isoformat(), progress=False)
+            if data.empty:
+                return None
+            close = data['Close'].squeeze()
+            volume = data['Volume'].squeeze()
+
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 4.5), height_ratios=[3, 1], sharex=True)
+            fig.subplots_adjust(hspace=0.05)
+
+            ax1.plot(close.index, close.values, color='#e74c3c', linewidth=2.5, label=ticker_symbol)
+            if ko_level:
+                ax1.axhline(y=ko_level, color='#e74c3c', linestyle='--', linewidth=1.5, label=f'KO ({ko_level:,.2f})')
+            if strike_level:
+                ax1.axhline(y=strike_level, color='#e67e22', linestyle='--', linewidth=1.5, label=f'Strike ({strike_level:,.2f})')
+            if eki_level:
+                ax1.axhline(y=eki_level, color='#8e44ad', linestyle='--', linewidth=1.5, label=f'EKI ({eki_level:,.2f})')
+
+            last_price = close.iloc[-1]
+            ax1.annotate(f'{last_price:.2f}', xy=(close.index[-1], last_price),
+                        fontsize=10, fontweight='bold', color='#e74c3c',
+                        xytext=(10, 5), textcoords='offset points')
+
+            ax1.set_title(f'{ticker_symbol} - {product_code}', fontsize=13, fontweight='bold', pad=10)
+            ax1.legend(loc='upper right', fontsize=8, framealpha=0.9)
+            ax1.set_ylabel('Price (USD)', fontsize=9)
+            ax1.grid(True, alpha=0.3)
+            ax1.spines['top'].set_visible(False)
+            ax1.spines['right'].set_visible(False)
+
+            colors = ['#e74c3c' if i > 0 and close.iloc[i] < close.iloc[i-1] else '#27ae60' for i in range(len(close))]
+            ax2.bar(volume.index, volume.values, color=colors, alpha=0.7, width=1)
+            ax2.set_ylabel('Volume', fontsize=8)
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%m'))
+            ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+            ax2.grid(True, alpha=0.3)
+            ax2.spines['top'].set_visible(False)
+            ax2.spines['right'].set_visible(False)
+
+            plt.tight_layout()
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            plt.savefig(tmp.name, dpi=150)
+            plt.close(fig)
+            return tmp.name
+        except:
+            return None
+
+    # ── 持倉明細 + 線圖 ──
+    chart_files = []
     if active_pos:
         pdf.add_page()
         pdf.set_font('chinese', '', 16)
@@ -839,6 +897,7 @@ def client_report(cid):
 
             for u in uls:
                 strike_dist = ''
+                dist = 0
                 if u.latest_price and u.strike_level:
                     dist = (u.latest_price / u.strike_level - 1) * 100
                     strike_dist = f'{dist:+.1f}%'
@@ -853,7 +912,6 @@ def client_report(cid):
                     strike_dist,
                     'V' if u.ko_hit else '',
                 ]
-                # 顏色標記
                 for i, v in enumerate(vals):
                     if i == 6 and strike_dist and dist < 0:
                         pdf.set_text_color(220, 50, 50)
@@ -863,9 +921,21 @@ def client_report(cid):
                     pdf.set_text_color(0, 0, 0)
                 pdf.ln()
 
-            pdf.ln(5)
+            pdf.ln(3)
 
-            if pdf.get_y() > 240:
+            # 每個標的的線圖
+            for u in uls:
+                if not u.ticker:
+                    continue
+                chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level)
+                if chart_path:
+                    chart_files.append(chart_path)
+                    if pdf.get_y() > 160:
+                        pdf.add_page()
+                    pdf.image(chart_path, x=10, w=190)
+                    pdf.ln(3)
+
+            if pdf.get_y() > 200:
                 pdf.add_page()
 
     # ── 風險提示 ──
@@ -877,7 +947,15 @@ def client_report(cid):
     buf = BytesIO()
     pdf.output(buf)
     buf.seek(0)
-    return send_file(buf, download_name=f'報告_{client.name_masked}_{today.strftime("%Y%m%d")}.pdf',
+
+    # 清理暫存圖檔
+    for f in chart_files:
+        try:
+            os.unlink(f)
+        except:
+            pass
+
+    return send_file(buf, download_name=f'持倉追蹤_{today.strftime("%Y%m%d")}.pdf',
                      as_attachment=True, mimetype='application/pdf')
 
 
