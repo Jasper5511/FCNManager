@@ -2,6 +2,11 @@ import os
 from datetime import timedelta
 
 basedir = os.path.abspath(os.path.dirname(__file__))
+instance_path = os.path.join(basedir, 'instance')
+os.makedirs(instance_path, exist_ok=True)
+
+# 預設 SQLite 路徑（絕對路徑）
+DEFAULT_DB = 'sqlite:///' + os.path.join(instance_path, 'fcn_data.db')
 
 
 class Config:
@@ -11,24 +16,23 @@ class Config:
 
 class DevelopmentConfig(Config):
     DEBUG = True
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'instance', 'fcn_data.db'))
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', DEFAULT_DB)
 
 
 class ProductionConfig(Config):
     DEBUG = False
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'instance', 'fcn_data.db'))
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', DEFAULT_DB)
 
     @staticmethod
     def init_app(app):
-        # 確保 instance 目錄存在（SQLite 用）
-        instance_path = os.path.join(basedir, 'instance')
-        os.makedirs(instance_path, exist_ok=True)
-        # Supabase / Railway 等平台用 postgres:// 開頭，SQLAlchemy 需要 postgresql://
         uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+        # 修正 postgres:// → postgresql://
         if uri and uri.startswith('postgres://'):
             app.config['SQLALCHEMY_DATABASE_URI'] = uri.replace('postgres://', 'postgresql://', 1)
+        # 如果 SQLite 相對路徑有問題，改用預設絕對路徑
+        if uri and uri.startswith('sqlite:///') and not uri.startswith('sqlite:////'):
+            if 'instance/fcn_data.db' in uri:
+                app.config['SQLALCHEMY_DATABASE_URI'] = DEFAULT_DB
 
 
 config = {

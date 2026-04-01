@@ -24,24 +24,31 @@ from line_bot import init_line, is_configured as line_is_configured
 init_line(app)
 
 # ── 排程：每日自動發送市場日報 ───────────────────────────────────────────────
-from apscheduler.schedulers.background import BackgroundScheduler
+def _setup_scheduler():
+    """設定排程（避免 gunicorn 多 worker 重複啟動）"""
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
 
-def _scheduled_daily_report():
-    """每日自動產生日報並透過 LINE 廣播"""
-    from line_bot import broadcast_text, is_configured
-    if not is_configured():
-        return
-    with app.app_context():
-        from daily_report import generate_market_report
-        report = generate_market_report(app)
-        broadcast_text(report)
-        app.logger.info('每日市場日報已自動發送')
+        def _scheduled_daily_report():
+            from line_bot import broadcast_text, is_configured
+            if not is_configured():
+                return
+            with app.app_context():
+                from daily_report import generate_market_report
+                report = generate_market_report(app)
+                broadcast_text(report)
+                app.logger.info('每日市場日報已自動發送')
 
-scheduler = BackgroundScheduler()
-# 每天早上 7:30 自動發送（台灣時間）
-scheduler.add_job(_scheduled_daily_report, 'cron', hour=7, minute=30,
-                  timezone='Asia/Taipei', id='daily_report')
-scheduler.start()
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(_scheduled_daily_report, 'cron', hour=7, minute=30,
+                          timezone='Asia/Taipei', id='daily_report')
+        scheduler.start()
+        return scheduler
+    except Exception as e:
+        app.logger.warning(f'排程啟動失敗: {e}')
+        return None
+
+scheduler = _setup_scheduler()
 
 # ── 初始化預設帳號 ────────────────────────────────────────────────────────────
 with app.app_context():
