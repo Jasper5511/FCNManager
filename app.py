@@ -376,7 +376,11 @@ def export_excel():
 @app.route('/')
 @login_required
 def dashboard():
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    try:
+        active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    except Exception as e:
+        app.logger.error(f'Dashboard query error: {e}')
+        active = Product.query.filter_by(status='active', user_id=current_uid()).all()
     return render_template('dashboard.html', active=active, today=date.today())
 
 

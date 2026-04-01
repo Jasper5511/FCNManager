@@ -9,6 +9,7 @@
     </div>
 </div>
 
+<!-- DEBUG: active count = {{ active|length }} -->
 {% if active %}
 {% for p in active %}
 <div class="card mb-3">
@@ -40,9 +41,9 @@
             <div class="col-auto"><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}{% if p.ko_type == 'stepdown' %} <span class="text-warning">(Stepdown)</span>{% endif %}</div>
             <div class="col-auto"><strong>Strike：</strong>{{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '-' }}</div>
             <div class="col-auto"><strong>EKI：</strong>{{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }}</div>
-            <div class="col-auto"><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date else '-' }}</div>
-            <div class="col-auto"><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date else '-' }}</div>
-            <div class="col-auto"><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</div>
+            <div class="col-auto"><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date and p.trade_date is not string else (p.trade_date or '-') }}</div>
+            <div class="col-auto"><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date and p.start_date is not string else (p.start_date or '-') }}</div>
+            <div class="col-auto"><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date and p.maturity_date is not string else (p.maturity_date or '-') }}</div>
         </div>
         {% if p.special_notes %}
         <div class="mb-2" style="font-size:0.82rem; color:#888;">{{ p.special_notes }}</div>
