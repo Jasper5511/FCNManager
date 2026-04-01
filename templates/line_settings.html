@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card mb-3">
+            <div class="card-header">
+                <h5 class="mb-0">LINE Bot 設定</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-4">
+                    <h6>目前狀態</h6>
+                    {% if configured %}
+                        <span class="badge bg-success fs-6">已連線</span>
+                        <span class="ms-2">訂閱人數：{{ subscriber_count }}</span>
+                    {% else %}
+                        <span class="badge bg-danger fs-6">未設定</span>
+                    {% endif %}
+                </div>
+
+                <hr>
+
+                <h6>設定 Messaging API</h6>
+                <div class="alert alert-info" style="font-size: 0.85rem;">
+                    <strong>設定步驟：</strong>
+                    <ol class="mb-0 mt-1">
+                        <li>前往 <a href="https://developers.line.biz/" target="_blank">LINE Developers Console</a></li>
+                        <li>建立 Provider（例如「投資服務」）</li>
+                        <li>建立 Messaging API Channel（例如「市場日報」）</li>
+                        <li>在 Channel 設定頁取得 <strong>Channel Secret</strong></li>
+                        <li>在 Messaging API 頁籤按 Issue 取得 <strong>Channel Access Token</strong></li>
+                        <li>在 Webhook 設定中填入：<code>https://你的網域/line/webhook</code></li>
+                    </ol>
+                </div>
+
+                <form method="POST">
+                    <div class="mb-3">
+                        <label class="form-label">Channel Secret</label>
+                        <input type="text" name="channel_secret" class="form-control"
+                               value="{{ current_secret }}" placeholder="輸入 Channel Secret">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Channel Access Token</label>
+                        <textarea name="access_token" class="form-control" rows="3"
+                                  placeholder="輸入 Channel Access Token (長效)">{{ current_token }}</textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">儲存設定</button>
+                </form>
+
+                {% if configured %}
+                <hr>
+                <h6>Webhook URL</h6>
+                <p class="text-muted" style="font-size: 0.85rem;">將以下 URL 填入 LINE Developers Console 的 Webhook 設定：</p>
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="webhookUrl"
+                           value="{{ request.host_url }}line/webhook" readonly>
+                    <button class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('webhookUrl').value); this.textContent='已複製'; setTimeout(()=>this.textContent='複製', 2000)">複製</button>
+                </div>
+
+                <h6>測試</h6>
+                <form method="POST" action="{{ url_for('send_daily_report') }}" class="d-inline">
+                    <button type="submit" class="btn btn-success btn-sm">發送測試日報</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

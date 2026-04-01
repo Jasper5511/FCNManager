@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .vscode/
 start_background.vbs
+fonts/

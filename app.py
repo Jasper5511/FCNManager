@@ -19,6 +19,30 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
+# ── 初始化 LINE Bot ──────────────────────────────────────────────────────────
+from line_bot import init_line, is_configured as line_is_configured
+init_line(app)
+
+# ── 排程：每日自動發送市場日報 ───────────────────────────────────────────────
+from apscheduler.schedulers.background import BackgroundScheduler
+
+def _scheduled_daily_report():
+    """每日自動產生日報並透過 LINE 廣播"""
+    from line_bot import broadcast_text, is_configured
+    if not is_configured():
+        return
+    with app.app_context():
+        from daily_report import generate_market_report
+        report = generate_market_report(app)
+        broadcast_text(report)
+        app.logger.info('每日市場日報已自動發送')
+
+scheduler = BackgroundScheduler()
+# 每天早上 7:30 自動發送（台灣時間）
+scheduler.add_job(_scheduled_daily_report, 'cron', hour=7, minute=30,
+                  timezone='Asia/Taipei', id='daily_report')
+scheduler.start()
+
 # ── 初始化預設帳號 ────────────────────────────────────────────────────────────
 with app.app_context():
     if not AppUser.query.first():
@@ -82,11 +106,14 @@ def change_password():
 TICKER_NAME = {
     'NVDA': '輝達', 'AVGO': '博通', 'TSM': '台積電', 'AMD': '超微',
     'MU': '美光', 'ARM': '安謀', 'QCOM': '高通', 'INTC': '英特爾',
-    'AAPL': '蘋果', 'MSFT': '微軟', 'GOOG': 'Google', 'AMZN': '亞馬遜',
-    'META': 'Meta', 'TSLA': '特斯拉', 'ORCL': '甲骨文', 'CRM': 'Salesforce',
-    'NFLX': 'Netflix', 'UBER': 'Uber', 'UNH': '聯合健康', 'JPM': '摩根大通',
+    'AAPL': '蘋果', 'MSFT': '微軟', 'GOOG': '谷歌', 'AMZN': '亞馬遜',
+    'META': '臉書', 'TSLA': '特斯拉', 'ORCL': '甲骨文', 'CRM': '賽富時',
+    'NFLX': '網飛', 'UBER': '優步', 'UNH': '聯合健康', 'JPM': '摩根大通',
     'GS': '高盛', 'BA': '波音', 'AAL': '美國航空', 'AA': '美國鋁業',
-    'NKE': 'Nike', 'COIN': 'Coinbase',
+    'NKE': '耐吉', 'COIN': '幣安所', 'SMCI': '超微電腦', 'ASML': '艾司摩爾',
+    'VST': '美國電力', 'F': '福特', 'DIS': '迪士尼', 'PYPL': '貝寶',
+    'CCL': '嘉年華', 'X': '美國鋼鐵', 'SOFI': '索飛', 'PLTR': '帕蘭提爾',
+    'MSTR': '微策略',
 }
 
 @app.context_processor
@@ -975,6 +1002,213 @@ def _parse_date(s):
         return date.fromisoformat(s)
     except:
         return None
+
+
+# ── 上傳 TS → 客戶文件圖片 ──────────────────────────────────────────────────
+@app.route('/upload_ts', methods=['GET', 'POST'])
+@login_required
+def upload_ts():
+    if request.method == 'POST':
+        from client_doc_generator import generate_client_doc_image
+        from flask import send_file
+        import tempfile
+
+        f = request.files.get('ts_file')
+        if not f or not f.filename.endswith('.pdf'):
+            flash('請上傳 PDF 檔案', 'danger')
+            return redirect(url_for('upload_ts'))
+
+        # 存暫存檔
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        f.save(tmp.name)
+        tmp.close()
+
+        try:
+            buf, data = generate_client_doc_image(tmp.name)
+            product_code = data.get('product_code', 'unknown')
+            filename = f'{product_code}_客戶文件.png'
+            return send_file(buf, download_name=filename, as_attachment=True, mimetype='image/png')
+        except Exception as e:
+            flash(f'解析失敗：{str(e)}', 'danger')
+            return redirect(url_for('upload_ts'))
+        finally:
+            os.unlink(tmp.name)
+
+    return render_template('upload_ts.html')
+
+
+# ── 報價圖片產生器 ─────────────────────────────────────────────────────────────
+@app.route('/quote')
+@login_required
+def quote():
+    return render_template('quote.html')
+
+
+@app.route('/quote/generate', methods=['POST'])
+@login_required
+def generate_quote():
+    from quote_generator import generate_quote_image
+    from flask import send_file
+
+    from quote_generator import TICKER_NAME as QT_TICKER_NAME
+    tickers = request.form.getlist('tickers')
+
+    # 處理自訂標的
+    custom_text = request.form.get('custom_tickers', '').strip()
+    if custom_text:
+        for line in custom_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            if parts:
+                ticker = parts[0].upper()
+                if ticker not in tickers:
+                    tickers.append(ticker)
+                if len(parts) > 1:
+                    QT_TICKER_NAME[ticker] = parts[1]
+
+    if not tickers:
+        flash('請至少選擇一個連結標的', 'danger')
+        return redirect(url_for('quote'))
+
+    # 解析百分比（使用者輸入 72.05 → 0.7205）
+    def parse_pct(val):
+        if not val:
+            return None
+        try:
+            v = float(val)
+            if v > 1:
+                return v / 100
+            return v
+        except:
+            return None
+
+    params = {
+        'product_type': request.form.get('product_type', 'FCN'),
+        'tenor': request.form.get('tenor', '6M'),
+        'strike_pct': parse_pct(request.form.get('strike_pct')),
+        'ko_pct': parse_pct(request.form.get('ko_pct')),
+        'coupon': parse_pct(request.form.get('coupon')),
+        'eki_pct': parse_pct(request.form.get('eki_pct')),
+        'ko_start': request.form.get('ko_start', '1M'),
+        'memory_ko': request.form.get('memory_ko') == '1',
+        'currency': request.form.get('currency', 'USD'),
+        'issuer': request.form.get('issuer', ''),
+        'tickers': tickers,
+    }
+
+    if not params['strike_pct'] or not params['coupon']:
+        flash('Strike 和 Coupon 為必填', 'danger')
+        return redirect(url_for('quote'))
+
+    try:
+        buf, price_date = generate_quote_image(params)
+        filename = f'報價_{date.today().strftime("%Y%m%d")}.png'
+        return send_file(buf, download_name=filename, as_attachment=True, mimetype='image/png')
+    except Exception as e:
+        flash(f'產生失敗：{str(e)}', 'danger')
+        return redirect(url_for('quote'))
+
+
+# ── LINE Webhook ─────────────────────────────────────────────────────────────
+@app.route('/line/webhook', methods=['POST'])
+def line_webhook():
+    from line_bot import get_handler
+    handler = get_handler()
+    if not handler:
+        return 'LINE Bot not configured', 503
+    signature = request.headers.get('X-Line-Signature', '')
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except Exception as e:
+        app.logger.error(f'LINE Webhook error: {e}')
+        return 'Error', 400
+    return 'OK', 200
+
+
+# ── 市場日報（網頁預覽 + LINE 推播）─────────────────────────────────────────
+@app.route('/daily_report')
+@login_required
+def daily_report():
+    from daily_report import generate_market_report
+    from line_bot import is_configured
+    report = generate_market_report(app)
+    return render_template('daily_report.html', report=report, configured=is_configured())
+
+
+@app.route('/daily_report/send', methods=['POST'])
+@login_required
+def send_daily_report():
+    from daily_report import generate_market_report
+    from line_bot import broadcast_text, is_configured, get_subscriber_count
+    if not is_configured():
+        flash('LINE Bot 尚未設定，請先設定 Channel Secret 和 Access Token', 'danger')
+        return redirect(url_for('line_settings'))
+    report = generate_market_report(app)
+    success = broadcast_text(report)
+    if success:
+        count = get_subscriber_count(app)
+        flash(f'日報已透過 LINE 廣播發送（訂閱人數：{count}）', 'success')
+    else:
+        flash('LINE 推播失敗，請檢查設定', 'danger')
+    return redirect(url_for('daily_report'))
+
+
+# ── LINE 設定頁 ──────────────────────────────────────────────────────────────
+@app.route('/line_settings', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def line_settings():
+    from line_bot import is_configured, get_subscriber_count
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    if request.method == 'POST':
+        secret = request.form.get('channel_secret', '').strip()
+        token = request.form.get('access_token', '').strip()
+        if secret and token:
+            # 寫入 .env 檔
+            env_lines = []
+            if os.path.exists(env_path):
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    env_lines = f.readlines()
+            # 更新或新增
+            new_lines = []
+            found_secret = False
+            found_token = False
+            for line in env_lines:
+                if line.startswith('LINE_CHANNEL_SECRET='):
+                    new_lines.append(f'LINE_CHANNEL_SECRET={secret}\n')
+                    found_secret = True
+                elif line.startswith('LINE_CHANNEL_ACCESS_TOKEN='):
+                    new_lines.append(f'LINE_CHANNEL_ACCESS_TOKEN={token}\n')
+                    found_token = True
+                else:
+                    new_lines.append(line)
+            if not found_secret:
+                new_lines.append(f'LINE_CHANNEL_SECRET={secret}\n')
+            if not found_token:
+                new_lines.append(f'LINE_CHANNEL_ACCESS_TOKEN={token}\n')
+            with open(env_path, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            # 重新載入環境變數並初始化
+            os.environ['LINE_CHANNEL_SECRET'] = secret
+            os.environ['LINE_CHANNEL_ACCESS_TOKEN'] = token
+            init_line(app)
+            flash('LINE Bot 設定已更新，請重新啟動伺服器以完整生效', 'success')
+        else:
+            flash('請填寫完整的 Channel Secret 和 Access Token', 'danger')
+        return redirect(url_for('line_settings'))
+
+    current_secret = os.environ.get('LINE_CHANNEL_SECRET', '')
+    current_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
+    configured = is_configured()
+    sub_count = get_subscriber_count(app) if configured else 0
+    return render_template('line_settings.html',
+                           configured=configured,
+                           current_secret=current_secret,
+                           current_token=current_token,
+                           subscriber_count=sub_count)
 
 
 if __name__ == '__main__':

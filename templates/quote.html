@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-lg-7">
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">報價圖片產生器</h5></div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('generate_quote') }}">
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">商品類型</label>
+                            <select name="product_type" class="form-select">
+                                <option value="FCN">FCN (固定配息)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">天期 Tenor</label>
+                            <select name="tenor" class="form-select">
+                                <option value="1M">1M</option>
+                                <option value="3M">3M</option>
+                                <option value="6M" selected>6M</option>
+                                <option value="9M">9M</option>
+                                <option value="10M">10M</option>
+                                <option value="12M">12M</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">幣別</label>
+                            <select name="currency" class="form-select">
+                                <option value="USD" selected>USD</option>
+                                <option value="AUD">AUD</option>
+                                <option value="JPY">JPY</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Strike %</label>
+                            <input type="text" name="strike_pct" class="form-control" placeholder="例：72.05" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">KO %</label>
+                            <input type="text" name="ko_pct" class="form-control" placeholder="例：100">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Coupon %</label>
+                            <input type="text" name="coupon" class="form-control" placeholder="例：10.00" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">EKI %</label>
+                            <input type="text" name="eki_pct" class="form-control" placeholder="無則留空">
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">KO Start 閉鎖</label>
+                            <select name="ko_start" class="form-select">
+                                <option value="1M" selected>1M</option>
+                                <option value="2M">2M</option>
+                                <option value="3M">3M</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">記憶式</label>
+                            <select name="memory_ko" class="form-select">
+                                <option value="1" selected>Daily Memory</option>
+                                <option value="0">非記憶式</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">發行機構</label>
+                            <select name="issuer" class="form-select">
+                                <option value="">--選擇--</option>
+                                <option value="UBS">UBS 瑞銀</option>
+                                <option value="SG">SG 法興</option>
+                                <option value="Natixis">Natixis 納帝希</option>
+                                <option value="CIT">CIT 花旗</option>
+                                <option value="HSBC">HSBC 匯豐</option>
+                                <option value="DBS">DBS 星展</option>
+                                <option value="MS">MS 摩根士丹利</option>
+                                <option value="BNP">BNP 法巴</option>
+                                <option value="GS">GS 高盛</option>
+                                <option value="JPM">JPM 摩根大通</option>
+                                <option value="NOM">NOM 野村</option>
+                                <option value="MAC">MAC 麥格理</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">連結標的（勾選）</label>
+                        <div class="row">
+                            {% set ticker_groups = {
+                                '半導體': ['NVDA', 'AVGO', 'TSM', 'AMD', 'MU', 'ARM', 'QCOM', 'INTC', 'ASML', 'SMCI'],
+                                '科技': ['AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'TSLA', 'ORCL', 'CRM', 'NFLX', 'MSTR'],
+                                '金融/其他': ['JPM', 'GS', 'BA', 'AAL', 'AA', 'NKE', 'COIN', 'UNH', 'DIS', 'F', 'CCL', 'X', 'UBER', 'PYPL', 'VST', 'PLTR', 'SOFI']
+                            } %}
+                            {% for group, tickers in ticker_groups.items() %}
+                            <div class="col-md-4">
+                                <small class="text-muted fw-bold">{{ group }}</small>
+                                {% for t in tickers %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="tickers" value="{{ t }}" id="t_{{ t }}">
+                                    <label class="form-check-label" for="t_{{ t }}" style="font-size:0.85rem;">
+                                        {{ t }} {{ TICKER_NAME.get(t, '') }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">自訂標的（代號 + 中文名稱，每行一個）</label>
+                        <textarea name="custom_tickers" class="form-control" rows="3" placeholder="例：&#10;ABNB 愛彼迎&#10;CRWD 群衆打擊"></textarea>
+                        <small class="text-muted">格式：代號 中文名稱，例如 <code>ABNB 愛彼迎</code></small>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">產生報價圖片</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card mb-3">
+            <div class="card-header"><h6 class="mb-0">使用說明</h6></div>
+            <div class="card-body" style="font-size: 0.9rem;">
+                <ol>
+                    <li>從公司系統取得報價參數</li>
+                    <li>填入 Strike%、KO%、Coupon%、EKI%</li>
+                    <li>勾選連結標的</li>
+                    <li>點「產生報價圖片」</li>
+                    <li>系統自動抓取昨日收盤價，產出圖片</li>
+                    <li>直接下載圖片傳給客戶</li>
+                </ol>
+                <p class="text-muted mb-0">百分比直接輸入數字，例如 Strike 72.05% 就輸入 <code>72.05</code></p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

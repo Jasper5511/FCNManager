@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">市場日報預覽</h5>
+                <div>
+                    <a href="{{ url_for('daily_report') }}" class="btn btn-outline-secondary btn-sm me-1">重新整理</a>
+                    <form method="POST" action="{{ url_for('send_daily_report') }}" class="d-inline">
+                        <button type="submit" class="btn btn-success btn-sm"
+                                onclick="return confirm('確定要透過 LINE 發送日報嗎？')">
+                            LINE 推播發送
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="card-body">
+                <pre style="white-space: pre-wrap; font-family: 'Microsoft JhengHei', monospace; font-size: 0.95rem; line-height: 1.6; background: #1a1a2e; color: #e0e0e0; padding: 20px; border-radius: 8px;">{{ report }}</pre>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card mb-3">
+            <div class="card-header"><h6 class="mb-0">使用說明</h6></div>
+            <div class="card-body" style="font-size: 0.9rem;">
+                <p><strong>自動推播</strong>：日報會在每個交易日早上自動透過 LINE 發送給所有訂閱用戶。</p>
+                <p><strong>手動發送</strong>：點擊「LINE 推播發送」立即發送當前日報。</p>
+                <p><strong>LINE 指令</strong>：訂閱用戶可在 LINE 中輸入以下指令：</p>
+                <ul>
+                    <li><code>日報</code> — 取得最新市場日報</li>
+                    <li><code>持倉</code> — 查看持倉摘要</li>
+                    <li><code>幫助</code> — 顯示指令說明</li>
+                </ul>
+                <hr>
+                <p class="text-muted mb-0">LINE Bot 狀態：
+                    {% if configured %}
+                        <span class="badge bg-success">已連線</span>
+                    {% else %}
+                        <span class="badge bg-danger">未設定</span>
+                        <a href="{{ url_for('line_settings') }}">前往設定</a>
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
