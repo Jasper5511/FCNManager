@@ -32,13 +32,27 @@ ISSUER_NAME = {
 
 
 def fetch_closing_prices(tickers):
-    """抓取前一完整交易日收盤價"""
+    """抓取前一完整交易日收盤價（多種方式備援）"""
+    # 方式1：yfinance
+    prices, price_date = _fetch_yfinance(tickers)
+    if prices:
+        return prices, price_date
+
+    # 方式2：Yahoo Finance API 直接請求
+    prices, price_date = _fetch_yahoo_api(tickers)
+    if prices:
+        return prices, price_date
+
+    return {}, None
+
+
+def _fetch_yfinance(tickers):
+    """用 yfinance 抓取"""
     try:
         today = date.today()
         data = yf.download(tickers, period='5d', progress=False, threads=False)
         if data.empty:
-            # 逐一抓取做備援
-            return _fetch_one_by_one(tickers)
+            return {}, None
         close = data['Close']
         prev_close = close[close.index.date < today]
         if prev_close.empty:
@@ -57,31 +71,40 @@ def fetch_closing_prices(tickers):
                     val = prev_close[t].dropna()
                     if len(val) > 0:
                         prices[t] = round(float(val.iloc[-1]), 2)
-        if not prices:
-            return _fetch_one_by_one(tickers)
         return prices, price_date
     except Exception as e:
-        print(f'yfinance batch download failed: {e}')
-        return _fetch_one_by_one(tickers)
+        print(f'yfinance failed: {e}')
+        return {}, None
 
 
-def _fetch_one_by_one(tickers):
-    """逐一抓取（備援方案）"""
+def _fetch_yahoo_api(tickers):
+    """直接用 Yahoo Finance API 抓取（備援）"""
+    import requests
     prices = {}
     price_date = None
     today = date.today()
-    for t in tickers:
+
+    for ticker in tickers:
         try:
-            data = yf.download(t, period='5d', progress=False, threads=False)
-            if not data.empty:
-                close = data['Close'].squeeze()
-                prev = close[close.index.date < today]
-                if prev.empty:
-                    prev = close
-                price_date = prev.index[-1].date()
-                prices[t] = round(float(prev.iloc[-1]), 2)
+            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d'
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.ok:
+                data = r.json()
+                result = data['chart']['result'][0]
+                closes = result['indicators']['quote'][0]['close']
+                timestamps = result['timestamp']
+                # 找前一交易日
+                for i in range(len(timestamps) - 1, -1, -1):
+                    from datetime import datetime
+                    dt = datetime.fromtimestamp(timestamps[i]).date()
+                    if dt < today and closes[i] is not None:
+                        prices[ticker] = round(closes[i], 2)
+                        price_date = dt
+                        break
         except Exception as e:
-            print(f'yfinance fetch {t} failed: {e}')
+            print(f'Yahoo API fetch {ticker} failed: {e}')
+
     return prices, price_date
 
 
