@@ -2,8 +2,8 @@ services:
   - type: web
     name: fcnmanager
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi:app
+    buildCommand: apt-get update && apt-get install -y fonts-noto-cjk && pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --timeout 120
     envVars:
       - key: FLASK_ENV
         value: production

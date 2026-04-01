@@ -33,28 +33,55 @@ ISSUER_NAME = {
 
 def fetch_closing_prices(tickers):
     """抓取前一完整交易日收盤價"""
-    today = date.today()
-    data = yf.download(tickers, period='5d', progress=False)
-    if data.empty:
-        return {}, None
-    close = data['Close']
-    prev_close = close[close.index.date < today]
-    if prev_close.empty:
-        prev_close = close
-    price_date = prev_close.index[-1].date()
-    prices = {}
-    if len(tickers) == 1:
-        series = prev_close.squeeze()
-        if hasattr(series, 'iloc'):
-            prices[tickers[0]] = round(float(series.iloc[-1]), 2)
+    try:
+        today = date.today()
+        data = yf.download(tickers, period='5d', progress=False, threads=False)
+        if data.empty:
+            # 逐一抓取做備援
+            return _fetch_one_by_one(tickers)
+        close = data['Close']
+        prev_close = close[close.index.date < today]
+        if prev_close.empty:
+            prev_close = close
+        price_date = prev_close.index[-1].date()
+        prices = {}
+        if len(tickers) == 1:
+            series = prev_close.squeeze()
+            if hasattr(series, 'iloc'):
+                prices[tickers[0]] = round(float(series.iloc[-1]), 2)
+            else:
+                prices[tickers[0]] = round(float(series), 2)
         else:
-            prices[tickers[0]] = round(float(series), 2)
-    else:
-        for t in tickers:
-            if t in prev_close.columns:
-                val = prev_close[t].dropna()
-                if len(val) > 0:
-                    prices[t] = round(float(val.iloc[-1]), 2)
+            for t in tickers:
+                if t in prev_close.columns:
+                    val = prev_close[t].dropna()
+                    if len(val) > 0:
+                        prices[t] = round(float(val.iloc[-1]), 2)
+        if not prices:
+            return _fetch_one_by_one(tickers)
+        return prices, price_date
+    except Exception as e:
+        print(f'yfinance batch download failed: {e}')
+        return _fetch_one_by_one(tickers)
+
+
+def _fetch_one_by_one(tickers):
+    """逐一抓取（備援方案）"""
+    prices = {}
+    price_date = None
+    today = date.today()
+    for t in tickers:
+        try:
+            data = yf.download(t, period='5d', progress=False, threads=False)
+            if not data.empty:
+                close = data['Close'].squeeze()
+                prev = close[close.index.date < today]
+                if prev.empty:
+                    prev = close
+                price_date = prev.index[-1].date()
+                prices[t] = round(float(prev.iloc[-1]), 2)
+        except Exception as e:
+            print(f'yfinance fetch {t} failed: {e}')
     return prices, price_date
 
 
