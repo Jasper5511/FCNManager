@@ -33,22 +33,27 @@ ISSUER_NAME = {
 
 def fetch_closing_prices(tickers, app=None):
     """抓取前一完整交易日收盤價（多種方式備援）"""
-    # 方式1：yfinance
+    # 方式1：從資料庫讀（最快，不依賴外部 API）
+    prices, price_date = _fetch_from_db(tickers)
+    if prices and len(prices) == len(tickers):
+        return prices, price_date
+
+    # 方式2：yfinance
     prices, price_date = _fetch_yfinance(tickers)
     if prices:
         return prices, price_date
 
-    # 方式2：Finnhub API（不封雲端 IP）
+    # 方式3：Finnhub API
     prices, price_date = _fetch_finnhub(tickers)
     if prices:
         return prices, price_date
 
-    # 方式3：Yahoo Finance API 直接請求
+    # 方式4：Yahoo Finance API 直接請求
     prices, price_date = _fetch_yahoo_api(tickers)
     if prices:
         return prices, price_date
 
-    # 方式4：從資料庫讀取已存的收盤價
+    # 方式5：回傳資料庫的部分結果（即使不完整）
     prices, price_date = _fetch_from_db(tickers)
     if prices:
         return prices, price_date
@@ -59,7 +64,9 @@ def fetch_closing_prices(tickers, app=None):
 def _fetch_from_db(tickers):
     """從資料庫讀取已更新的收盤價（備援）"""
     try:
-        from flask import current_app
+        from flask import has_app_context
+        if not has_app_context():
+            return {}, None
         from models import Underlying
         prices = {}
         price_date = None
@@ -109,9 +116,12 @@ def _fetch_yfinance(tickers):
 def _fetch_finnhub(tickers):
     """用 Finnhub API 抓取（免費，不封雲端 IP）"""
     import requests
-    api_key = os.environ.get('FINNHUB_API_KEY', 'ctq6fspr01qhb4b3gjtgctq6fspr01qhb4b3gjt0')  # 免費 sandbox key
+    api_key = os.environ.get('FINNHUB_API_KEY', '')
+    if not api_key:
+        return {}, None
     prices = {}
     price_date = date.today()
+    import time
 
     for ticker in tickers:
         try:
@@ -119,9 +129,9 @@ def _fetch_finnhub(tickers):
             r = requests.get(url, timeout=10)
             if r.ok:
                 data = r.json()
-                # pc = previous close
                 if data.get('pc') and data['pc'] > 0:
                     prices[ticker] = round(data['pc'], 2)
+            time.sleep(0.2)  # 避免限速
         except Exception as e:
             print(f'Finnhub fetch {ticker} failed: {e}')
 

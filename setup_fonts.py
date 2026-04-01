@@ -29,26 +29,28 @@ def get_font_paths():
         if os.path.exists(p):
             return p, p
 
-    # 備援：下載標準 TTF 字型（非可變字重，相容 fpdf2）
+    # 備援：下載字型
     os.makedirs(FONT_DIR, exist_ok=True)
-    font_file = os.path.join(FONT_DIR, 'NotoSansTC-Regular.ttf')
+    font_file = os.path.join(FONT_DIR, 'NotoSansTC.ttf')
     if not os.path.exists(font_file):
-        urls = [
-            'https://github.com/google/fonts/raw/main/ofl/notosanstc/static/NotoSansTC-Regular.ttf',
-            'https://github.com/googlefonts/noto-cjk/releases/download/Sans2.004/08_NotoSansCJKtc.zip',
-        ]
         import urllib.request
+        urls = [
+            'https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf',
+            'https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf',
+        ]
         for url in urls:
             try:
-                if url.endswith('.ttf'):
-                    print(f'下載中文字型...')
-                    urllib.request.urlretrieve(url, font_file)
-                    if os.path.exists(font_file) and os.path.getsize(font_file) > 1000:
-                        print('字型下載完成')
-                        break
+                print(f'下載中文字型: {url[:60]}...')
+                urllib.request.urlretrieve(url, font_file)
+                if os.path.exists(font_file) and os.path.getsize(font_file) > 10000:
+                    print(f'字型下載完成 ({os.path.getsize(font_file)} bytes)')
+                    break
+                else:
+                    os.remove(font_file)
             except Exception as e:
-                print(f'字型下載失敗 ({url}): {e}')
-                continue
+                print(f'字型下載失敗: {e}')
+                if os.path.exists(font_file):
+                    os.remove(font_file)
 
     if os.path.exists(font_file):
         return font_file, font_file
