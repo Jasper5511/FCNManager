@@ -17,10 +17,14 @@ class DevelopmentConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        'DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'instance', 'fcn_data.db'))
 
     @staticmethod
     def init_app(app):
+        # 確保 instance 目錄存在（SQLite 用）
+        instance_path = os.path.join(basedir, 'instance')
+        os.makedirs(instance_path, exist_ok=True)
         # Supabase / Railway 等平台用 postgres:// 開頭，SQLAlchemy 需要 postgresql://
         uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
         if uri and uri.startswith('postgres://'):
