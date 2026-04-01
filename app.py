@@ -806,17 +806,8 @@ def client_report(cid):
     pdf = PDF()
 
     # 載入中文字型
-    font_path = None
-    if platform.system() == 'Windows':
-        font_path = 'C:/Windows/Fonts/msjh.ttc'
-    else:
-        for p in ['/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-                  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-                  '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-                  '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc']:
-            if os.path.exists(p):
-                font_path = p
-                break
+    from setup_fonts import get_font_paths
+    font_path, _ = get_font_paths()
 
     if font_path and os.path.exists(font_path):
         pdf.add_font('chinese', '', font_path, uni=True)
