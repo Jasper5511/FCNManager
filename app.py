@@ -817,24 +817,22 @@ def client_report(cid):
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
 
-    # ── 封面 ──
-    pdf.set_font('chinese', '', 24)
-    pdf.ln(30)
-    pdf.cell(0, 15, '持倉追蹤報告', align='C', new_x='LMARGIN', new_y='NEXT')
-    pdf.ln(5)
-    pdf.set_font('chinese', '', 14)
-    pdf.cell(0, 10, f'報告日期：{today.strftime("%Y/%m/%d")}', align='C', new_x='LMARGIN', new_y='NEXT')
-
     # 持倉摘要
     active_pos = [pos for pos in positions if pos.product.status == 'active']
     total_amount = sum(pos.investment_amount or 0 for pos in active_pos)
     total_monthly = sum(pos.monthly_coupon or 0 for pos in active_pos)
 
-    pdf.ln(15)
-    pdf.set_font('chinese', '', 12)
+    # ── 標題 + 摘要（同一頁）──
+    pdf.set_font('chinese', '', 20)
+    pdf.cell(0, 12, '持倉追蹤報告', align='C', new_x='LMARGIN', new_y='NEXT')
+    pdf.set_font('chinese', '', 11)
+    pdf.cell(0, 8, f'報告日期：{today.strftime("%Y/%m/%d")}', align='C', new_x='LMARGIN', new_y='NEXT')
+    pdf.ln(3)
+    pdf.set_font('chinese', '', 10)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(0, 10, f'持倉商品數：{len(active_pos)}    總投資金額：USD {total_amount:,.0f}    每月配息：USD {total_monthly:,.0f}',
+    pdf.cell(0, 8, f'持倉商品數：{len(active_pos)}    總投資金額：USD {total_amount:,.0f}    每月配息：USD {total_monthly:,.0f}',
              align='C', fill=True, new_x='LMARGIN', new_y='NEXT')
+    pdf.ln(5)
 
     # ── 圖表產生函數 ──
     def make_chart(ticker_symbol, product_code, ko_level, strike_level, eki_level):
@@ -893,90 +891,105 @@ def client_report(cid):
             app.logger.warning(f'Chart render failed: {e}')
             return None
 
-    # ── 持倉明細 + 線圖 ──
+    # ── 持倉明細（同一頁，不換頁）──
     chart_files = []
     if active_pos:
-        pdf.add_page()
-        pdf.set_font('chinese', '', 16)
-        pdf.cell(0, 12, '持倉明細', new_x='LMARGIN', new_y='NEXT')
-        pdf.ln(3)
+        pdf.set_font('chinese', '', 14)
+        pdf.cell(0, 10, '持倉明細', new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(2)
 
         for pos in active_pos:
             p = pos.product
             uls = sorted(p.underlyings, key=lambda u: u.position_order or 0)
 
+            # 判斷是否有 EKI
+            has_eki = any(u.eki_level for u in uls)
+
             # 商品標題
-            pdf.set_font('chinese', '', 11)
+            if pdf.get_y() > 240:
+                pdf.add_page()
+            pdf.set_font('chinese', '', 10)
             pdf.set_fill_color(26, 26, 46)
             pdf.set_text_color(255, 255, 255)
-            pdf.cell(0, 8, f'  {p.product_code}  |  {p.issuer or "-"}  |  {p.tenor_months}M  |  {"{:.1%}".format(p.coupon_rate) if p.coupon_rate else "-"}',
+            pdf.cell(0, 7, f'  {p.product_code}  |  {p.issuer or "-"}  |  {p.tenor_months}M  |  {"{:.1%}".format(p.coupon_rate) if p.coupon_rate else "-"}',
                      fill=True, new_x='LMARGIN', new_y='NEXT')
             pdf.set_text_color(0, 0, 0)
 
             # 基本資訊
-            pdf.set_font('chinese', '', 9)
+            pdf.set_font('chinese', '', 8)
             days = p.days_to_maturity
             days_str = f'{days} 天' if days is not None else '-'
-            pdf.cell(0, 6, f'投資金額：USD {pos.investment_amount:,.0f}    月配息：USD {pos.monthly_coupon:,.0f}    到期日：{p.maturity_date.strftime("%Y/%m/%d") if p.maturity_date else "-"}    剩餘：{days_str}',
+            pdf.cell(0, 5, f'投資金額：USD {pos.investment_amount:,.0f}    月配息：USD {pos.monthly_coupon:,.0f}    到期日：{p.maturity_date.strftime("%Y/%m/%d") if p.maturity_date else "-"}    剩餘：{days_str}',
                      new_x='LMARGIN', new_y='NEXT')
 
-            # 標的表格
-            pdf.set_font('chinese', '', 8)
+            # 標的表格（動態欄位）
+            pdf.set_font('chinese', '', 7)
             pdf.set_fill_color(220, 220, 220)
-            col_w = [25, 25, 25, 25, 25, 25, 25, 15]
-            headers = ['標的', '期初價格', 'KO水準', '執行價', 'EKI', '最新價', '距Strike', 'KO']
+            strike_pct_str = f'({p.strike_pct:.0%})' if p.strike_pct else ''
+            if has_eki:
+                col_w = [35, 22, 25, 25, 22, 22, 12]
+                headers = ['標的', '期初價格', '提前出場價', f'執行價{strike_pct_str}', 'EKI', '最新價', 'KO']
+            else:
+                col_w = [40, 27, 30, 30, 27, 12]
+                headers = ['標的', '期初價格', '提前出場價', f'執行價{strike_pct_str}', '最新價', 'KO']
+
             for i, h in enumerate(headers):
-                pdf.cell(col_w[i], 6, h, border=1, fill=True, align='C')
+                pdf.cell(col_w[i], 5, h, border=1, fill=True, align='C')
             pdf.ln()
 
             for u in uls:
-                strike_dist = ''
-                dist = 0
-                if u.latest_price and u.strike_level:
-                    dist = (u.latest_price / u.strike_level - 1) * 100
-                    strike_dist = f'{dist:+.1f}%'
+                ticker_cn = TICKER_NAME.get(u.ticker, '')
+                ticker_display = f'{u.ticker} {ticker_cn}' if ticker_cn else u.ticker
 
-                vals = [
-                    u.ticker,
-                    f'{u.initial_price:,.2f}' if u.initial_price else '-',
-                    f'{u.ko_level:,.2f}' if u.ko_level else '-',
-                    f'{u.strike_level:,.2f}' if u.strike_level else '-',
-                    f'{u.eki_level:,.2f}' if u.eki_level else '-',
-                    f'{u.latest_price:,.2f}' if u.latest_price else '-',
-                    strike_dist,
-                    'V' if u.ko_hit else '',
-                ]
+                if has_eki:
+                    vals = [
+                        ticker_display,
+                        f'{u.initial_price:,.2f}' if u.initial_price else '-',
+                        f'{u.ko_level:,.2f}' if u.ko_level else '-',
+                        f'{u.strike_level:,.2f}' if u.strike_level else '-',
+                        f'{u.eki_level:,.2f}' if u.eki_level else '-',
+                        f'{u.latest_price:,.2f}' if u.latest_price else '-',
+                        'V' if u.ko_hit else '',
+                    ]
+                else:
+                    vals = [
+                        ticker_display,
+                        f'{u.initial_price:,.2f}' if u.initial_price else '-',
+                        f'{u.ko_level:,.2f}' if u.ko_level else '-',
+                        f'{u.strike_level:,.2f}' if u.strike_level else '-',
+                        f'{u.latest_price:,.2f}' if u.latest_price else '-',
+                        'V' if u.ko_hit else '',
+                    ]
                 for i, v in enumerate(vals):
-                    if i == 6 and strike_dist and dist < 0:
-                        pdf.set_text_color(220, 50, 50)
-                    elif i == 6 and strike_dist and dist > 0:
-                        pdf.set_text_color(39, 174, 96)
-                    pdf.cell(col_w[i], 5, v, border=1, align='C')
-                    pdf.set_text_color(0, 0, 0)
+                    pdf.cell(col_w[i], 4.5, v, border=1, align='C')
                 pdf.ln()
 
-            pdf.ln(3)
+            pdf.ln(2)
 
-            # 每個標的的線圖
+            # 線圖（兩張並排同一行）
+            chart_paths = []
             for u in uls:
                 if not u.ticker:
                     continue
                 chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level)
                 if chart_path:
                     chart_files.append(chart_path)
-                    if pdf.get_y() > 160:
+                    chart_paths.append(chart_path)
+
+            if chart_paths:
+                for ci in range(0, len(chart_paths), 2):
+                    if pdf.get_y() > 180:
                         pdf.add_page()
-                    pdf.image(chart_path, x=10, w=190)
+                    x_left = 10
+                    x_right = 105
+                    chart_w = 92
+                    pdf.image(chart_paths[ci], x=x_left, w=chart_w)
+                    if ci + 1 < len(chart_paths):
+                        pdf.image(chart_paths[ci + 1], x=x_right, y=pdf.get_y() - 52, w=chart_w)
                     pdf.ln(3)
 
-            if pdf.get_y() > 200:
+            if pdf.get_y() > 240:
                 pdf.add_page()
-
-    # ── 風險提示 ──
-    pdf.ln(5)
-    pdf.set_font('chinese', '', 7)
-    pdf.set_text_color(150, 150, 150)
-    pdf.multi_cell(0, 4, '免責聲明：本報告僅供參考，不構成投資建議。結構型商品涉及本金風險，投資人應審慎評估自身風險承受能力。')
 
     buf = BytesIO()
     pdf.output(buf)
