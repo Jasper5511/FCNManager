@@ -1001,6 +1001,25 @@ def reports():
     return render_template('reports.html', clients=all_clients)
 
 
+# ── 診斷（部署後可刪除）─────────────────────────────────────────────────────
+@app.route('/debug_db')
+@login_required
+def debug_db():
+    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', 'NOT SET')
+    # 隱藏密碼
+    import re
+    safe_uri = re.sub(r'://[^@]+@', '://***@', db_uri) if db_uri else 'NOT SET'
+    uid = session.get('user_id')
+    product_count = Product.query.filter_by(user_id=uid, status='active').count()
+    client_count = Client.query.filter_by(user_id=uid).count()
+    return jsonify({
+        'db': safe_uri,
+        'user_id': uid,
+        'active_products': product_count,
+        'clients': client_count,
+    })
+
+
 # ── 工具函數 ──────────────────────────────────────────────────────────────────
 def _parse_date(s):
     if not s:
