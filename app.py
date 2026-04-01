@@ -842,9 +842,13 @@ def client_report(cid):
             import yfinance as yf
             from datetime import timedelta
             start = (today - timedelta(days=365)).isoformat()
-            data = yf.download(ticker_symbol, start=start, end=today.isoformat(), progress=False)
+            data = yf.download(ticker_symbol, start=start, end=today.isoformat(), progress=False, threads=False)
             if data.empty:
                 return None
+        except Exception as e:
+            app.logger.warning(f'Chart data fetch failed for {ticker_symbol}: {e}')
+            return None
+        try:
             close = data['Close'].squeeze()
             volume = data['Volume'].squeeze()
 
@@ -885,7 +889,8 @@ def client_report(cid):
             plt.savefig(tmp.name, dpi=150)
             plt.close(fig)
             return tmp.name
-        except:
+        except Exception as e:
+            app.logger.warning(f'Chart render failed: {e}')
             return None
 
     # ── 持倉明細 + 線圖 ──
