@@ -1,7 +1,7 @@
 """
 跨平台中文字型載入
 Windows: 微軟正黑體
-Linux/Render: Noto Sans CJK (apt 安裝) 或下載
+Linux/Render: 下載 Noto Sans TC 並轉為靜態字型
 """
 import os
 
@@ -17,41 +17,43 @@ def get_font_paths():
         bold = win_bold if os.path.exists(win_bold) else win_regular
         return win_regular, bold
 
-    # Linux：先找系統安裝的 Noto CJK（apt install fonts-noto-cjk）
-    linux_paths = [
-        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-    ]
-    for p in linux_paths:
+    # Linux：先找系統字型
+    for p in ['/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+              '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+              '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+              '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc']:
         if os.path.exists(p):
             return p, p
 
-    # 備援：下載字型
+    # 下載並轉換
     os.makedirs(FONT_DIR, exist_ok=True)
-    font_file = os.path.join(FONT_DIR, 'NotoSansTC.ttf')
-    if not os.path.exists(font_file):
-        import urllib.request
-        urls = [
-            'https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf',
-            'https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf',
-        ]
-        for url in urls:
-            try:
-                print(f'下載中文字型: {url[:60]}...')
-                urllib.request.urlretrieve(url, font_file)
-                if os.path.exists(font_file) and os.path.getsize(font_file) > 10000:
-                    print(f'字型下載完成 ({os.path.getsize(font_file)} bytes)')
-                    break
-                else:
-                    os.remove(font_file)
-            except Exception as e:
-                print(f'字型下載失敗: {e}')
-                if os.path.exists(font_file):
-                    os.remove(font_file)
+    static_font = os.path.join(FONT_DIR, 'NotoSansTC-Static.ttf')
 
-    if os.path.exists(font_file):
-        return font_file, font_file
-    return None, None
+    if os.path.exists(static_font) and os.path.getsize(static_font) > 100000:
+        return static_font, static_font
+
+    var_font = os.path.join(FONT_DIR, 'NotoSansTC-Variable.ttf')
+    if not os.path.exists(var_font):
+        import urllib.request
+        url = 'https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf'
+        try:
+            print('下載中文字型...')
+            urllib.request.urlretrieve(url, var_font)
+        except Exception as e:
+            print(f'字型下載失敗: {e}')
+            return None, None
+
+    # 移除可變字重表，轉為靜態字型（fpdf2 需要）
+    try:
+        from fontTools.ttLib import TTFont
+        print('轉換字型為靜態格式...')
+        font = TTFont(var_font)
+        for tag in ['fvar', 'STAT', 'gvar', 'cvar', 'avar', 'HVAR', 'VVAR', 'MVAR']:
+            if tag in font:
+                del font[tag]
+        font.save(static_font)
+        print(f'靜態字型已產生 ({os.path.getsize(static_font)} bytes)')
+        return static_font, static_font
+    except Exception as e:
+        print(f'字型轉換失敗: {e}')
+        return var_font, var_font
