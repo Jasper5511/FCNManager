@@ -1006,17 +1006,21 @@ def reports():
 @login_required
 def debug_db():
     db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', 'NOT SET')
-    # 隱藏密碼
     import re
     safe_uri = re.sub(r'://[^@]+@', '://***@', db_uri) if db_uri else 'NOT SET'
-    uid = session.get('user_id')
-    product_count = Product.query.filter_by(user_id=uid, status='active').count()
-    client_count = Client.query.filter_by(user_id=uid).count()
+    uid = current_uid()
+    # 跟 dashboard 完全一樣的查詢
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
+    products_info = [{'id': p.id, 'code': p.product_code, 'user_id': p.user_id, 'status': p.status, 'created_at': str(p.created_at)} for p in active]
+    # 也查不帶 order_by 的
+    active2 = Product.query.filter_by(status='active', user_id=uid).all()
     return jsonify({
         'db': safe_uri,
-        'user_id': uid,
-        'active_products': product_count,
-        'clients': client_count,
+        'session_user_id': session.get('user_id'),
+        'current_uid': uid,
+        'with_order': len(active),
+        'without_order': len(active2),
+        'products': products_info,
     })
 
 
