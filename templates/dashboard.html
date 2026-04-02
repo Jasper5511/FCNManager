@@ -2,7 +2,7 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">持倉總覽 <small class="text-muted">{{ today.strftime('%Y/%m/%d') }}</small></h5>
+    <h5 class="mb-0">庫存總覽 <small class="text-muted">{{ today.strftime('%Y/%m/%d') }}</small></h5>
     <div>
         <a href="/fetch_prices" class="btn btn-outline-info btn-sm me-1">更新收盤價</a>
         <a href="/products/add" class="btn btn-primary btn-sm">+ 新增商品</a>
@@ -56,10 +56,11 @@
                 <tr>
                     <th>標的</th>
                     <th class="text-end">期初價格</th>
-                    <th class="text-end">KO水準 ({{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '' }})</th>
+                    <th class="text-end">提前出場價 ({{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '' }})</th>
                     <th class="text-end">執行價 ({{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '' }})</th>
-                    <th class="text-end">EKI ({{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }})</th>
+                    <th class="text-end">觸及生效價 ({{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }})</th>
                     <th class="text-end">昨收價</th>
+                    <th class="text-center">日期</th>
                     <th class="text-center">警示</th>
                     <th class="text-center">KO</th>
                 </tr>
@@ -73,10 +74,10 @@
                 <td class="text-end">{{ '{:,.4f}'.format(u.strike_level) if u.strike_level else '-' }}</td>
                 <td class="text-end">{{ '{:,.4f}'.format(u.eki_level) if u.eki_level else '-' }}</td>
                 <td class="text-end {{ 'price-above' if u.latest_price and u.ko_level and u.latest_price >= u.ko_level else '' }}">
-                    {% if u.latest_price %}
-                        {{ '{:,.2f}'.format(u.latest_price) }}
-                        {% if u.price_date %}<small class="text-muted ms-1">{{ u.price_date.strftime('%m/%d') }}</small>{% endif %}
-                    {% else %}-{% endif %}
+                    {% if u.latest_price %}{{ '{:,.2f}'.format(u.latest_price) }}{% else %}-{% endif %}
+                </td>
+                <td class="text-center text-muted" style="font-size:0.8rem;">
+                    {% if u.price_date %}{{ u.price_date.strftime('%m/%d') }}{% endif %}
                 </td>
                 <td class="text-center">
                     {% if u.latest_price %}

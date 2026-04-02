@@ -57,6 +57,7 @@ class Product(db.Model):
     strike_pct     = db.Column(db.Float)
     eki_pct        = db.Column(db.Float)                         # None = 無EKI
     ko_type        = db.Column(db.String(20), default='fixed')   # fixed / stepdown
+    ko_lockout     = db.Column(db.Integer, default=1)            # 閉鎖期（月）
     special_notes  = db.Column(db.Text)
     status         = db.Column(db.String(20), default='active')  # active / ko_exited / matured
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
