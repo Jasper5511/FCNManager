@@ -447,13 +447,23 @@ def fetch_prices():
                     u.price_date = price_date
                     updated += 1
 
-                # 記憶式KO檢查：從比價日至今，是否曾收盤 >= KO水準
+                # 記憶式KO檢查：多來源交叉比對，至少2個來源確認才標KO
                 if u.ko_level and not u.ko_hit and p.start_date:
-                    hist = fetch_history(u.ticker, p.start_date, today)
-                    if hist is not None and not hist.empty:
-                        hist_close = hist['Close'].squeeze()
-                        if (hist_close >= u.ko_level).any():
-                            u.ko_hit = True
+                    from price_fetcher import _HISTORY_SOURCES
+                    ko_confirms = 0
+                    for hist_fn in _HISTORY_SOURCES[:6]:  # 取前6個來源比對
+                        try:
+                            df = hist_fn(u.ticker, p.start_date, today)
+                            if df is not None and not df.empty:
+                                c = df['Close'].squeeze()
+                                if (c >= u.ko_level).any():
+                                    ko_confirms += 1
+                                    if ko_confirms >= 2:
+                                        break
+                        except Exception:
+                            continue
+                    if ko_confirms >= 2:
+                        u.ko_hit = True
 
         db.session.commit()
         flash(f'已更新 {updated} 檔標的收盤價（{price_date.strftime("%Y/%m/%d")}）', 'success')
