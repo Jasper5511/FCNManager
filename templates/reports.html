@@ -4,36 +4,51 @@
     <h5 class="mb-0">客戶報告</h5>
 </div>
 
-<div class="card p-0">
+{% for c in clients %}
+{% set active_pos = c.positions|selectattr('product.status', 'equalto', 'active')|list %}
+{% if active_pos %}
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">{{ c.name_masked }}</span>
+        <div>
+            <span class="badge bg-secondary me-2">{{ active_pos|length }} 檔</span>
+            {% if active_pos|length > 1 %}
+            <a href="/report/{{ c.id }}" class="btn btn-primary btn-sm">全部下載 (ZIP)</a>
+            {% endif %}
+        </div>
+    </div>
     <table class="table table-hover mb-0">
-        <thead class="table-dark">
+        <thead class="table-light">
             <tr>
-                <th>客戶</th>
-                <th>持倉中</th>
-                <th>總金額</th>
-                <th>每月配息</th>
-                <th class="text-center">操作</th>
+                <th>商品</th>
+                <th>發行商</th>
+                <th>投資金額</th>
+                <th>月配息</th>
+                <th>到期日</th>
+                <th class="text-center">下載</th>
             </tr>
         </thead>
         <tbody>
-        {% for c in clients %}
-        {% set active_pos = c.positions|selectattr('product.status', 'equalto', 'active')|list %}
-        {% set total = active_pos|sum(attribute='investment_amount') if active_pos else 0 %}
+        {% for pos in active_pos %}
+        {% set p = pos.product %}
         <tr>
-            <td class="fw-bold">{{ c.name_masked }}</td>
-            <td>{{ active_pos|length }} 檔</td>
-            <td>USD {{ '{:,.0f}'.format(total) }}</td>
-            <td>USD {{ '{:,.0f}'.format(active_pos|sum(attribute='monthly_coupon')) if active_pos else '-' }}</td>
+            <td class="fw-bold">{{ p.product_code }}</td>
+            <td>{{ p.issuer or '-' }}</td>
+            <td>USD {{ '{:,.0f}'.format(pos.investment_amount) }}</td>
+            <td>USD {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}</td>
+            <td>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</td>
             <td class="text-center">
-                {% if active_pos %}
-                <a href="/report/{{ c.id }}" class="btn btn-primary btn-sm">產出 PDF 報告</a>
-                {% else %}
-                <span class="text-muted">無持倉</span>
-                {% endif %}
+                <a href="/report/{{ c.id }}/{{ p.id }}" class="btn btn-outline-primary btn-sm">PDF</a>
             </td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
 </div>
+{% endif %}
+{% endfor %}
+
+{% if not clients|selectattr('positions')|list %}
+<div class="text-muted text-center py-5">尚無客戶資料</div>
+{% endif %}
 {% endblock %}

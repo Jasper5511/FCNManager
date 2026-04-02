@@ -1,7 +1,6 @@
 """
 報價圖片產生器 — 100% 對齊使用者指定排版
 """
-import yfinance as yf
 from datetime import date
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
@@ -32,28 +31,22 @@ ISSUER_NAME = {
 
 
 def fetch_closing_prices(tickers, app=None):
-    """抓取前一完整交易日收盤價（多種方式備援）"""
+    """抓取前一完整交易日收盤價（DB 優先 → price_fetcher 15 來源備援）"""
     # 方式1：從資料庫讀（最快，不依賴外部 API）
     prices, price_date = _fetch_from_db(tickers)
     if prices and len(prices) == len(tickers):
         return prices, price_date
 
-    # 方式2：yfinance
-    prices, price_date = _fetch_yfinance(tickers)
-    if prices:
-        return prices, price_date
+    # 方式2：price_fetcher 多來源備援（15 來源）
+    try:
+        from price_fetcher import fetch_quotes
+        prices, price_date = fetch_quotes(tickers)
+        if prices:
+            return prices, price_date
+    except Exception as e:
+        print(f'price_fetcher failed: {e}')
 
-    # 方式3：Finnhub API
-    prices, price_date = _fetch_finnhub(tickers)
-    if prices:
-        return prices, price_date
-
-    # 方式4：Yahoo Finance API 直接請求
-    prices, price_date = _fetch_yahoo_api(tickers)
-    if prices:
-        return prices, price_date
-
-    # 方式5：回傳資料庫的部分結果（即使不完整）
+    # 方式3：回傳資料庫的部分結果（即使不完整）
     prices, price_date = _fetch_from_db(tickers)
     if prices:
         return prices, price_date
@@ -62,7 +55,7 @@ def fetch_closing_prices(tickers, app=None):
 
 
 def _fetch_from_db(tickers):
-    """從資料庫讀取已更新的收盤價（備援）"""
+    """從資料庫讀取已更新的收盤價"""
     try:
         from flask import has_app_context
         if not has_app_context():
@@ -80,93 +73,6 @@ def _fetch_from_db(tickers):
     except Exception as e:
         print(f'DB fetch failed: {e}')
         return {}, None
-
-
-def _fetch_yfinance(tickers):
-    """用 yfinance 抓取"""
-    try:
-        today = date.today()
-        data = yf.download(tickers, period='5d', progress=False, threads=False)
-        if data.empty:
-            return {}, None
-        close = data['Close']
-        prev_close = close[close.index.date < today]
-        if prev_close.empty:
-            prev_close = close
-        price_date = prev_close.index[-1].date()
-        prices = {}
-        if len(tickers) == 1:
-            series = prev_close.squeeze()
-            if hasattr(series, 'iloc'):
-                prices[tickers[0]] = round(float(series.iloc[-1]), 2)
-            else:
-                prices[tickers[0]] = round(float(series), 2)
-        else:
-            for t in tickers:
-                if t in prev_close.columns:
-                    val = prev_close[t].dropna()
-                    if len(val) > 0:
-                        prices[t] = round(float(val.iloc[-1]), 2)
-        return prices, price_date
-    except Exception as e:
-        print(f'yfinance failed: {e}')
-        return {}, None
-
-
-def _fetch_finnhub(tickers):
-    """用 Finnhub API 抓取（免費，不封雲端 IP）"""
-    import requests
-    api_key = os.environ.get('FINNHUB_API_KEY', '')
-    if not api_key:
-        return {}, None
-    prices = {}
-    price_date = date.today()
-    import time
-
-    for ticker in tickers:
-        try:
-            url = f'https://finnhub.io/api/v1/quote?symbol={ticker}&token={api_key}'
-            r = requests.get(url, timeout=10)
-            if r.ok:
-                data = r.json()
-                if data.get('pc') and data['pc'] > 0:
-                    prices[ticker] = round(data['pc'], 2)
-            time.sleep(0.2)  # 避免限速
-        except Exception as e:
-            print(f'Finnhub fetch {ticker} failed: {e}')
-
-    return prices, price_date if prices else None
-
-
-def _fetch_yahoo_api(tickers):
-    """直接用 Yahoo Finance API 抓取（備援）"""
-    import requests
-    prices = {}
-    price_date = None
-    today = date.today()
-
-    for ticker in tickers:
-        try:
-            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d'
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            r = requests.get(url, headers=headers, timeout=10)
-            if r.ok:
-                data = r.json()
-                result = data['chart']['result'][0]
-                closes = result['indicators']['quote'][0]['close']
-                timestamps = result['timestamp']
-                # 找前一交易日
-                for i in range(len(timestamps) - 1, -1, -1):
-                    from datetime import datetime
-                    dt = datetime.fromtimestamp(timestamps[i]).date()
-                    if dt < today and closes[i] is not None:
-                        prices[ticker] = round(closes[i], 2)
-                        price_date = dt
-                        break
-        except Exception as e:
-            print(f'Yahoo API fetch {ticker} failed: {e}')
-
-    return prices, price_date
 
 
 def _text_center(draw, x, y, w, h, text, font, fill):
@@ -245,16 +151,7 @@ def generate_quote_image(params):
     margin = 15
     img_w = total_w + margin * 2
 
-    # 高度：參數8行 + 發行機構1行 + 表頭2行 + 標的N行
-    img_h = margin + 8 * row_h + row_h + 2 * row_h + len(tickers) * row_h + margin
-
-    img = Image.new('RGB', (img_w, img_h), WHITE)
-    draw = ImageDraw.Draw(img)
-
-    x0 = margin
-    y = margin
-
-    # ── 上半部：商品參數（8行 x 3欄）──
+    # ── 上半部：商品參數 ──
     ko_display = params.get('ko_display', '')
     if not ko_display:
         ko_val = params.get('ko_pct', '')
@@ -276,12 +173,26 @@ def generate_quote_image(params):
         ('Type',       '類型',       type_display),
         ('Tenor',      '天期',       params['tenor']),
         ('Strike',     '預計執行價', strike_display),
+    ]
+    # 有 EKI 時，在 KO 上面加一行
+    if params.get('eki_pct') and isinstance(params['eki_pct'], (int, float)):
+        eki_display = f'{params["eki_pct"]:.2%}'
+        param_rows.append(('EKI', '觸及生效價', eki_display))
+    param_rows += [
         ('KO',         '出場價',     ko_display),
         ('Coupon',     '年化報酬率', coupon_display),
         ('KO Start',   '閉鎖',       params.get('ko_start', '1M')),
         ('Memory KO' if params.get('memory_ko') else 'KO', '記憶式' if params.get('memory_ko') else '非記憶式', 'YES'),
         ('Currency',   '幣別',       params.get('currency', 'USD')),
     ]
+
+    # 動態計算圖片高度
+    img_h = margin + len(param_rows) * row_h + row_h + 2 * row_h + len(tickers) * row_h + margin
+    img = Image.new('RGB', (img_w, img_h), WHITE)
+    draw = ImageDraw.Draw(img)
+
+    x0 = margin
+    y = margin
 
     for eng, chi, val in param_rows:
         x = x0

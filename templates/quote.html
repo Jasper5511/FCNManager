@@ -16,12 +16,9 @@
                         <div class="col-md-4">
                             <label class="form-label">天期 Tenor</label>
                             <select name="tenor" class="form-select">
-                                <option value="1M">1M</option>
-                                <option value="3M">3M</option>
-                                <option value="6M" selected>6M</option>
-                                <option value="9M">9M</option>
-                                <option value="10M">10M</option>
-                                <option value="12M">12M</option>
+                                {% for m in range(1, 13) %}
+                                <option value="{{ m }}M"{{ ' selected' if m == 6 }}>{{ m }}M</option>
+                                {% endfor %}
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -57,9 +54,9 @@
                         <div class="col-md-4">
                             <label class="form-label">KO Start 閉鎖</label>
                             <select name="ko_start" class="form-select">
-                                <option value="1M" selected>1M</option>
-                                <option value="2M">2M</option>
-                                <option value="3M">3M</option>
+                                {% for m in range(1, 5) %}
+                                <option value="{{ m }}M"{{ ' selected' if m == 1 }}>{{ m }}M</option>
+                                {% endfor %}
                             </select>
                         </div>
                         <div class="col-md-4">

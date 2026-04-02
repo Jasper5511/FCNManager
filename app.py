@@ -1,11 +1,11 @@
 import sys, io, os
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from functools import wraps
 from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser
 from config import config
-from datetime import date
+from datetime import date, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -396,7 +396,8 @@ def ko_history():
 @app.route('/fetch_prices')
 @login_required
 def fetch_prices():
-    import yfinance as yf
+    from price_fetcher import fetch_quotes, fetch_history
+
     active = Product.query.filter_by(status='active', user_id=current_uid()).all()
     tickers = set()
     for p in active:
@@ -409,13 +410,12 @@ def fetch_prices():
 
     try:
         today = date.today()
-        # 先抓最新收盤價（前一完整交易日）
-        data = yf.download(list(tickers), period='5d', progress=False)
-        close = data['Close']
-        prev_close = close[close.index.date < today]
-        if prev_close.empty:
-            prev_close = close
-        price_date = prev_close.index[-1].date()
+        prices, price_date = fetch_quotes(tickers)
+        if not prices:
+            flash('所有股價來源皆無法連線', 'danger')
+            return redirect(url_for('dashboard'))
+        if not price_date:
+            price_date = today - timedelta(days=1)
 
         updated = 0
         for p in active:
@@ -423,18 +423,15 @@ def fetch_prices():
                 if not u.ticker:
                     continue
                 # 更新最新收盤價
-                if u.ticker in prev_close.columns:
-                    series = prev_close[u.ticker].dropna()
-                    if len(series) > 0:
-                        u.latest_price = round(float(series.iloc[-1]), 2)
-                        u.price_date = price_date
-                        updated += 1
+                if u.ticker in prices:
+                    u.latest_price = prices[u.ticker]
+                    u.price_date = price_date
+                    updated += 1
 
                 # 記憶式KO檢查：從比價日至今，是否曾收盤 >= KO水準
                 if u.ko_level and not u.ko_hit and p.start_date:
-                    hist = yf.download(u.ticker, start=p.start_date.isoformat(),
-                                       end=today.isoformat(), progress=False)
-                    if not hist.empty:
+                    hist = fetch_history(u.ticker, p.start_date, today)
+                    if hist is not None and not hist.empty:
                         hist_close = hist['Close'].squeeze()
                         if (hist_close >= u.ko_level).any():
                             u.ko_hit = True
@@ -728,21 +725,12 @@ def briefing():
             }
             alerts.append(alert)
 
-    # 市場指標（需付費方案才能抓）
+    # 市場指標（多來源備援）
     market = None
     try:
-        import yfinance as yf
-        indices = yf.download(['^GSPC', '^IXIC', '^DJI'], period='2d', progress=False)
-        if not indices.empty:
-            close = indices['Close']
-            prev = close.iloc[-2] if len(close) >= 2 else close.iloc[-1]
-            last = close.iloc[-1]
-            market = {
-                'sp500': {'price': round(float(last['^GSPC']), 2), 'chg': round(float((last['^GSPC']/prev['^GSPC']-1)*100), 2)},
-                'nasdaq': {'price': round(float(last['^IXIC']), 2), 'chg': round(float((last['^IXIC']/prev['^IXIC']-1)*100), 2)},
-                'dow': {'price': round(float(last['^DJI']), 2), 'chg': round(float((last['^DJI']/prev['^DJI']-1)*100), 2)},
-            }
-    except:
+        from price_fetcher import fetch_indices
+        market = fetch_indices()
+    except Exception:
         market = None
 
     # Fear & Greed Index
@@ -772,23 +760,18 @@ def briefing():
 
 
 # ── 客戶 PDF 報告 ────────────────────────────────────────────────────────────
-@app.route('/report/<int:cid>')
-@login_required
-def client_report(cid):
+
+def _make_single_product_pdf(pos, today, font_path):
+    """產生單一商品的 PDF，回傳 BytesIO"""
     from fpdf import FPDF
     from io import BytesIO
-    from flask import send_file
-    import platform
-
     import tempfile
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
 
-    client = Client.query.get_or_404(cid)
-    positions = [pos for pos in client.positions if pos.product.user_id == current_uid()]
-    today = date.today()
+    p = pos.product
 
     class PDF(FPDF):
         def header(self):
@@ -796,7 +779,6 @@ def client_report(cid):
                 self.set_font('chinese', '', 8)
                 self.cell(0, 5, '持倉追蹤報告', align='R')
                 self.ln(8)
-
         def footer(self):
             self.set_y(-15)
             self.set_font('chinese', '', 8)
@@ -804,55 +786,46 @@ def client_report(cid):
             self.cell(0, 10, f'第 {self.page_no()} 頁', align='C')
 
     pdf = PDF()
-
-    # 載入中文字型
-    from setup_fonts import get_font_paths
-    font_path, _ = get_font_paths()
-
     if font_path and os.path.exists(font_path):
         pdf.add_font('chinese', '', font_path, uni=True)
     else:
         pdf.add_font('chinese', '', uni=True)
-
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
 
-    # 持倉摘要
-    active_pos = [pos for pos in positions if pos.product.status == 'active']
-    total_amount = sum(pos.investment_amount or 0 for pos in active_pos)
-    total_monthly = sum(pos.monthly_coupon or 0 for pos in active_pos)
-
-    # ── 標題 + 摘要（同一頁）──
+    # 標題
     pdf.set_font('chinese', '', 20)
     pdf.cell(0, 12, '持倉追蹤報告', align='C', new_x='LMARGIN', new_y='NEXT')
     pdf.set_font('chinese', '', 11)
     pdf.cell(0, 8, f'報告日期：{today.strftime("%Y/%m/%d")}', align='C', new_x='LMARGIN', new_y='NEXT')
     pdf.ln(3)
+
+    # 摘要
     pdf.set_font('chinese', '', 10)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(0, 8, f'持倉商品數：{len(active_pos)}    總投資金額：USD {total_amount:,.0f}    每月配息：USD {total_monthly:,.0f}',
+    pdf.cell(0, 8, f'投資金額：USD {pos.investment_amount:,.0f}    每月配息：USD {pos.monthly_coupon:,.0f}',
              align='C', fill=True, new_x='LMARGIN', new_y='NEXT')
     pdf.ln(5)
 
-    # ── 圖表產生函數 ──
+    # 圖表產生函數
+    chart_files = []
+
     def make_chart(ticker_symbol, product_code, ko_level, strike_level, eki_level):
         try:
-            import yfinance as yf
+            from price_fetcher import fetch_history
             from datetime import timedelta
-            start = (today - timedelta(days=365)).isoformat()
-            data = yf.download(ticker_symbol, start=start, end=today.isoformat(), progress=False, threads=False)
-            if data.empty:
+            start_d = today - timedelta(days=365)
+            data = fetch_history(ticker_symbol, start_d, today)
+            if data is None or data.empty:
                 return None
         except Exception as e:
             app.logger.warning(f'Chart data fetch failed for {ticker_symbol}: {e}')
             return None
         try:
             close = data['Close'].squeeze()
-            volume = data['Volume'].squeeze()
-
+            volume = data['Volume'].squeeze() if 'Volume' in data.columns else close * 0
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 4.5), height_ratios=[3, 1], sharex=True)
             fig.subplots_adjust(hspace=0.05)
-
             ax1.plot(close.index, close.values, color='#e74c3c', linewidth=2.5, label=ticker_symbol)
             if ko_level:
                 ax1.axhline(y=ko_level, color='#e74c3c', linestyle='--', linewidth=1.5, label=f'KO ({ko_level:,.2f})')
@@ -860,19 +833,16 @@ def client_report(cid):
                 ax1.axhline(y=strike_level, color='#e67e22', linestyle='--', linewidth=1.5, label=f'Strike ({strike_level:,.2f})')
             if eki_level:
                 ax1.axhline(y=eki_level, color='#8e44ad', linestyle='--', linewidth=1.5, label=f'EKI ({eki_level:,.2f})')
-
             last_price = close.iloc[-1]
             ax1.annotate(f'{last_price:.2f}', xy=(close.index[-1], last_price),
                         fontsize=10, fontweight='bold', color='#e74c3c',
                         xytext=(10, 5), textcoords='offset points')
-
             ax1.set_title(f'{ticker_symbol} - {product_code}', fontsize=13, fontweight='bold', pad=10)
             ax1.legend(loc='upper right', fontsize=8, framealpha=0.9)
             ax1.set_ylabel('Price (USD)', fontsize=9)
             ax1.grid(True, alpha=0.3)
             ax1.spines['top'].set_visible(False)
             ax1.spines['right'].set_visible(False)
-
             colors = ['#e74c3c' if i > 0 and close.iloc[i] < close.iloc[i-1] else '#27ae60' for i in range(len(close))]
             ax2.bar(volume.index, volume.values, color=colors, alpha=0.7, width=1)
             ax2.set_ylabel('Volume', fontsize=8)
@@ -881,7 +851,6 @@ def client_report(cid):
             ax2.grid(True, alpha=0.3)
             ax2.spines['top'].set_visible(False)
             ax2.spines['right'].set_visible(False)
-
             plt.tight_layout()
             tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
             plt.savefig(tmp.name, dpi=150)
@@ -891,105 +860,89 @@ def client_report(cid):
             app.logger.warning(f'Chart render failed: {e}')
             return None
 
-    # ── 持倉明細（同一頁，不換頁）──
-    chart_files = []
-    if active_pos:
-        pdf.set_font('chinese', '', 14)
-        pdf.cell(0, 10, '持倉明細', new_x='LMARGIN', new_y='NEXT')
-        pdf.ln(2)
+    # 持倉明細
+    uls = sorted(p.underlyings, key=lambda u: u.position_order or 0)
+    has_eki = any(u.eki_level for u in uls)
 
-        for pos in active_pos:
-            p = pos.product
-            uls = sorted(p.underlyings, key=lambda u: u.position_order or 0)
+    # 商品標題
+    pdf.set_font('chinese', '', 10)
+    pdf.set_fill_color(26, 26, 46)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 7, f'  {p.product_code}  |  {p.issuer or "-"}  |  {p.tenor_months}M  |  {"{:.1%}".format(p.coupon_rate) if p.coupon_rate else "-"}',
+             fill=True, new_x='LMARGIN', new_y='NEXT')
+    pdf.set_text_color(0, 0, 0)
 
-            # 判斷是否有 EKI
-            has_eki = any(u.eki_level for u in uls)
+    # 基本資訊
+    pdf.set_font('chinese', '', 8)
+    days = p.days_to_maturity
+    days_str = f'{days} 天' if days is not None else '-'
+    pdf.cell(0, 5, f'投資金額：USD {pos.investment_amount:,.0f}    月配息：USD {pos.monthly_coupon:,.0f}    到期日：{p.maturity_date.strftime("%Y/%m/%d") if p.maturity_date else "-"}    剩餘：{days_str}',
+             new_x='LMARGIN', new_y='NEXT')
 
-            # 商品標題
-            if pdf.get_y() > 240:
+    # 標的表格
+    pdf.set_font('chinese', '', 7)
+    pdf.set_fill_color(220, 220, 220)
+    strike_pct_str = f'({p.strike_pct:.0%})' if p.strike_pct else ''
+    if has_eki:
+        col_w = [35, 22, 25, 25, 22, 22, 12]
+        headers = ['標的', '期初價格', '提前出場價', f'執行價{strike_pct_str}', 'EKI', '最新價', 'KO']
+    else:
+        col_w = [40, 27, 30, 30, 27, 12]
+        headers = ['標的', '期初價格', '提前出場價', f'執行價{strike_pct_str}', '最新價', 'KO']
+
+    for i, h in enumerate(headers):
+        pdf.cell(col_w[i], 5, h, border=1, fill=True, align='C')
+    pdf.ln()
+
+    for u in uls:
+        ticker_cn = TICKER_NAME.get(u.ticker, '')
+        ticker_display = f'{u.ticker} {ticker_cn}' if ticker_cn else u.ticker
+        if has_eki:
+            vals = [
+                ticker_display,
+                f'{u.initial_price:,.2f}' if u.initial_price else '-',
+                f'{u.ko_level:,.2f}' if u.ko_level else '-',
+                f'{u.strike_level:,.2f}' if u.strike_level else '-',
+                f'{u.eki_level:,.2f}' if u.eki_level else '-',
+                f'{u.latest_price:,.2f}' if u.latest_price else '-',
+                'V' if u.ko_hit else '',
+            ]
+        else:
+            vals = [
+                ticker_display,
+                f'{u.initial_price:,.2f}' if u.initial_price else '-',
+                f'{u.ko_level:,.2f}' if u.ko_level else '-',
+                f'{u.strike_level:,.2f}' if u.strike_level else '-',
+                f'{u.latest_price:,.2f}' if u.latest_price else '-',
+                'V' if u.ko_hit else '',
+            ]
+        for i, v in enumerate(vals):
+            pdf.cell(col_w[i], 4.5, v, border=1, align='C')
+        pdf.ln()
+
+    pdf.ln(2)
+
+    # 線圖（兩張並排）
+    chart_paths = []
+    for u in uls:
+        if not u.ticker:
+            continue
+        chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level)
+        if chart_path:
+            chart_files.append(chart_path)
+            chart_paths.append(chart_path)
+
+    if chart_paths:
+        for ci in range(0, len(chart_paths), 2):
+            if pdf.get_y() > 180:
                 pdf.add_page()
-            pdf.set_font('chinese', '', 10)
-            pdf.set_fill_color(26, 26, 46)
-            pdf.set_text_color(255, 255, 255)
-            pdf.cell(0, 7, f'  {p.product_code}  |  {p.issuer or "-"}  |  {p.tenor_months}M  |  {"{:.1%}".format(p.coupon_rate) if p.coupon_rate else "-"}',
-                     fill=True, new_x='LMARGIN', new_y='NEXT')
-            pdf.set_text_color(0, 0, 0)
-
-            # 基本資訊
-            pdf.set_font('chinese', '', 8)
-            days = p.days_to_maturity
-            days_str = f'{days} 天' if days is not None else '-'
-            pdf.cell(0, 5, f'投資金額：USD {pos.investment_amount:,.0f}    月配息：USD {pos.monthly_coupon:,.0f}    到期日：{p.maturity_date.strftime("%Y/%m/%d") if p.maturity_date else "-"}    剩餘：{days_str}',
-                     new_x='LMARGIN', new_y='NEXT')
-
-            # 標的表格（動態欄位）
-            pdf.set_font('chinese', '', 7)
-            pdf.set_fill_color(220, 220, 220)
-            strike_pct_str = f'({p.strike_pct:.0%})' if p.strike_pct else ''
-            if has_eki:
-                col_w = [35, 22, 25, 25, 22, 22, 12]
-                headers = ['標的', '期初價格', '提前出場價', f'執行價{strike_pct_str}', 'EKI', '最新價', 'KO']
-            else:
-                col_w = [40, 27, 30, 30, 27, 12]
-                headers = ['標的', '期初價格', '提前出場價', f'執行價{strike_pct_str}', '最新價', 'KO']
-
-            for i, h in enumerate(headers):
-                pdf.cell(col_w[i], 5, h, border=1, fill=True, align='C')
-            pdf.ln()
-
-            for u in uls:
-                ticker_cn = TICKER_NAME.get(u.ticker, '')
-                ticker_display = f'{u.ticker} {ticker_cn}' if ticker_cn else u.ticker
-
-                if has_eki:
-                    vals = [
-                        ticker_display,
-                        f'{u.initial_price:,.2f}' if u.initial_price else '-',
-                        f'{u.ko_level:,.2f}' if u.ko_level else '-',
-                        f'{u.strike_level:,.2f}' if u.strike_level else '-',
-                        f'{u.eki_level:,.2f}' if u.eki_level else '-',
-                        f'{u.latest_price:,.2f}' if u.latest_price else '-',
-                        'V' if u.ko_hit else '',
-                    ]
-                else:
-                    vals = [
-                        ticker_display,
-                        f'{u.initial_price:,.2f}' if u.initial_price else '-',
-                        f'{u.ko_level:,.2f}' if u.ko_level else '-',
-                        f'{u.strike_level:,.2f}' if u.strike_level else '-',
-                        f'{u.latest_price:,.2f}' if u.latest_price else '-',
-                        'V' if u.ko_hit else '',
-                    ]
-                for i, v in enumerate(vals):
-                    pdf.cell(col_w[i], 4.5, v, border=1, align='C')
-                pdf.ln()
-
-            pdf.ln(2)
-
-            # 線圖（兩張並排同一行）
-            chart_paths = []
-            for u in uls:
-                if not u.ticker:
-                    continue
-                chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level)
-                if chart_path:
-                    chart_files.append(chart_path)
-                    chart_paths.append(chart_path)
-
-            if chart_paths:
-                for ci in range(0, len(chart_paths), 2):
-                    if pdf.get_y() > 180:
-                        pdf.add_page()
-                    x_left = 10
-                    x_right = 105
-                    chart_w = 92
-                    pdf.image(chart_paths[ci], x=x_left, w=chart_w)
-                    if ci + 1 < len(chart_paths):
-                        pdf.image(chart_paths[ci + 1], x=x_right, y=pdf.get_y() - 52, w=chart_w)
-                    pdf.ln(3)
-
-            if pdf.get_y() > 240:
-                pdf.add_page()
+            x_left = 10
+            x_right = 105
+            chart_w = 92
+            pdf.image(chart_paths[ci], x=x_left, w=chart_w)
+            if ci + 1 < len(chart_paths):
+                pdf.image(chart_paths[ci + 1], x=x_right, y=pdf.get_y() - 52, w=chart_w)
+            pdf.ln(3)
 
     buf = BytesIO()
     pdf.output(buf)
@@ -1002,8 +955,65 @@ def client_report(cid):
         except:
             pass
 
-    return send_file(buf, download_name=f'持倉追蹤_{today.strftime("%Y%m%d")}.pdf',
-                     as_attachment=True, mimetype='application/pdf')
+    return buf
+
+
+@app.route('/report/<int:cid>/<int:pid>')
+@login_required
+def client_report_single(cid, pid):
+    """單一商品 PDF 報告"""
+    from flask import send_file
+    from setup_fonts import get_font_paths
+
+    client = Client.query.get_or_404(cid)
+    pos = Position.query.filter_by(client_id=cid, product_id=pid).first_or_404()
+    if pos.product.user_id != current_uid():
+        abort(403)
+
+    today = date.today()
+    font_path, _ = get_font_paths()
+    buf = _make_single_product_pdf(pos, today, font_path)
+    fname = f'{pos.product.product_code}_{today.strftime("%Y%m%d")}.pdf'
+    return send_file(buf, download_name=fname, as_attachment=True, mimetype='application/pdf')
+
+
+@app.route('/report/<int:cid>')
+@login_required
+def client_report(cid):
+    """全部商品打包 — 單一商品直接回傳 PDF，多商品回傳 ZIP"""
+    from io import BytesIO
+    from flask import send_file
+    from setup_fonts import get_font_paths
+    import zipfile
+
+    client = Client.query.get_or_404(cid)
+    positions = [pos for pos in client.positions if pos.product.user_id == current_uid()]
+    active_pos = [pos for pos in positions if pos.product.status == 'active']
+    today = date.today()
+    font_path, _ = get_font_paths()
+
+    if not active_pos:
+        flash('此客戶無有效持倉', 'warning')
+        return redirect(url_for('reports'))
+
+    # 單一商品 → 直接回傳 PDF
+    if len(active_pos) == 1:
+        buf = _make_single_product_pdf(active_pos[0], today, font_path)
+        fname = f'{active_pos[0].product.product_code}_{today.strftime("%Y%m%d")}.pdf'
+        return send_file(buf, download_name=fname, as_attachment=True, mimetype='application/pdf')
+
+    # 多商品 → 各自產出 PDF 後打包 ZIP
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for pos in active_pos:
+            pdf_buf = _make_single_product_pdf(pos, today, font_path)
+            fname = f'{pos.product.product_code}_{today.strftime("%Y%m%d")}.pdf'
+            zf.writestr(fname, pdf_buf.read())
+
+    zip_buf.seek(0)
+    return send_file(zip_buf,
+                     download_name=f'{client.name_masked}_報告_{today.strftime("%Y%m%d")}.zip',
+                     as_attachment=True, mimetype='application/zip')
 
 
 # ── 客戶報告列表 ─────────────────────────────────────────────────────────────
