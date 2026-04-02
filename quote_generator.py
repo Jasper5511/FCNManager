@@ -108,7 +108,7 @@ def generate_quote_image(params):
     from setup_fonts import get_font_paths
     font_path, font_bold_path = get_font_paths()
 
-    font = ImageFont.truetype(font_path, 16)
+    font = ImageFont.truetype(font_bold_path, 16)
     font_bold = ImageFont.truetype(font_bold_path, 16)
     font_header = ImageFont.truetype(font_bold_path, 14)
 
