@@ -18,6 +18,14 @@ db.init_app(app)
 
 with app.app_context():
     db.create_all()
+    # 自動遷移：補上新欄位
+    from sqlalchemy import text, inspect
+    with db.engine.connect() as conn:
+        cols = [c['name'] for c in inspect(db.engine).get_columns('products')]
+        if 'ko_lockout' not in cols:
+            conn.execute(text('ALTER TABLE products ADD COLUMN ko_lockout INTEGER DEFAULT 1'))
+            conn.commit()
+            app.logger.info('已自動新增 ko_lockout 欄位')
 
 # ── 初始化 LINE Bot ──────────────────────────────────────────────────────────
 from line_bot import init_line, is_configured as line_is_configured
