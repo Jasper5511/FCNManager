@@ -39,7 +39,58 @@ def _setup_scheduler():
                 broadcast_text(report)
                 app.logger.info('每日市場日報已自動發送')
 
+        def _scheduled_price_update():
+            with app.app_context():
+                from price_fetcher import fetch_quotes, fetch_history
+                from dateutil.relativedelta import relativedelta
+                users = AppUser.query.all()
+                today = date.today()
+                for user in users:
+                    active = Product.query.filter_by(status='active', user_id=user.id).all()
+                    tickers = set()
+                    for p in active:
+                        for u in p.underlyings:
+                            if u.ticker:
+                                tickers.add(u.ticker)
+                    if not tickers:
+                        continue
+                    prices, price_date = fetch_quotes(tickers)
+                    if not prices:
+                        continue
+                    if not price_date:
+                        price_date = today - timedelta(days=1)
+                    for p in active:
+                        for u in p.underlyings:
+                            if not u.ticker:
+                                continue
+                            if u.ticker in prices:
+                                u.latest_price = prices[u.ticker]
+                                u.price_date = price_date
+                            if u.ko_level and not u.ko_hit and p.start_date:
+                                lockout = p.ko_lockout or 1
+                                ko_start = p.start_date + relativedelta(months=lockout)
+                                if today >= ko_start:
+                                    from price_fetcher import _HISTORY_SOURCES
+                                    ko_confirms = 0
+                                    for hist_fn in _HISTORY_SOURCES[:6]:
+                                        try:
+                                            df = hist_fn(u.ticker, ko_start, today)
+                                            if df is not None and not df.empty:
+                                                c = df['Close'].squeeze()
+                                                if (c >= u.ko_level).any():
+                                                    ko_confirms += 1
+                                                    if ko_confirms >= 2:
+                                                        break
+                                        except Exception:
+                                            continue
+                                    if ko_confirms >= 2:
+                                        u.ko_hit = True
+                    db.session.commit()
+                app.logger.info('每日收盤價已自動更新')
+
         scheduler = BackgroundScheduler()
+        scheduler.add_job(_scheduled_price_update, 'cron', hour=6, minute=0,
+                          timezone='Asia/Taipei', id='daily_price_update')
         scheduler.add_job(_scheduled_daily_report, 'cron', hour=7, minute=30,
                           timezone='Asia/Taipei', id='daily_report')
         scheduler.start()

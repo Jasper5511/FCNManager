@@ -100,9 +100,11 @@
             <p class="fw-bold mb-2">新增客戶部位</p>
             <select name="client_id" class="form-select mb-2" required>
                 <option value="">選擇客戶</option>
-                {% for c in product.positions[0].client.__class__.query.order_by('name').all() if product.positions else [] %}
+                {% if product.positions %}
+                {% for c in product.positions[0].client.__class__.query.order_by('name').all() %}
                 <option value="{{ c.id }}">{{ c.name }}</option>
                 {% endfor %}
+                {% endif %}
             </select>
             <input name="investment_amount" type="number" class="form-control mb-2" placeholder="投資金額" required>
             <input name="notes" class="form-control mb-2" placeholder="備注">

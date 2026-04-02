@@ -16,6 +16,11 @@
     <div class="card-header d-flex justify-content-between align-items-center py-2"
          style="background:#1a1a2e; color:#fff;">
         <div>
+            {% for pos in p.positions %}
+            <span class="badge bg-light text-dark me-2" style="font-size:0.8rem;">
+                {{ pos.client.name_masked }}｜{{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}｜月配 {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}
+            </span>
+            {% endfor %}
             <a href="/products/{{ p.id }}" class="text-white fw-bold text-decoration-none" style="font-size:1.05rem;">
                 {{ p.product_code }}
             </a>
@@ -59,9 +64,11 @@
                     <th class="text-end">提前出場價 ({{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '' }})</th>
                     <th class="text-end">執行價 ({{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '' }})</th>
                     <th class="text-end">觸及生效價 ({{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }})</th>
-                    <th class="text-end">昨收價</th>
-                    <th class="text-center">日期</th>
-                    <th class="text-center">警示</th>
+                    <th class="text-end">
+                        {% set price_date = p.underlyings[0].price_date if p.underlyings and p.underlyings[0].price_date else None %}
+                        {{ price_date.strftime('%m/%d') if price_date else '' }} 收盤價
+                    </th>
+                    <th class="text-center">溫馨提醒</th>
                     <th class="text-center">KO</th>
                 </tr>
             </thead>
@@ -76,15 +83,12 @@
                 <td class="text-end {{ 'price-above' if u.latest_price and u.ko_level and u.latest_price >= u.ko_level else '' }}">
                     {% if u.latest_price %}{{ '{:,.2f}'.format(u.latest_price) }}{% else %}-{% endif %}
                 </td>
-                <td class="text-center text-muted" style="font-size:0.8rem;">
-                    {% if u.price_date %}{{ u.price_date.strftime('%m/%d') }}{% endif %}
-                </td>
                 <td class="text-center">
                     {% if u.latest_price %}
                         {% if u.eki_level and u.latest_price <= u.eki_level %}
-                            <span class="badge bg-danger" title="跌破 EKI">EKI !</span>
+                            <span class="badge bg-danger">觸及生效價!</span>
                         {% elif u.strike_level and u.latest_price <= u.strike_level %}
-                            <span class="badge bg-warning text-dark" title="跌破執行價">Strike !</span>
+                            <span class="badge bg-warning text-dark">觸碰執行價!</span>
                         {% endif %}
                     {% endif %}
                 </td>
@@ -100,21 +104,10 @@
         </table>
         {% endif %}
 
-        <!-- 客戶部位 + 操作按鈕 -->
-        <div class="d-flex justify-content-between align-items-end">
-            <div>
-                {% for pos in p.positions %}
-                <span class="badge bg-light text-dark border me-1" style="font-size:0.85rem;">
-                    {{ pos.client.name_masked }}
-                    ｜{{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}
-                    ｜月配 {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}
-                </span>
-                {% endfor %}
-                {% if not p.positions %}
-                <span class="text-muted" style="font-size:0.85rem;">尚未建立客戶部位</span>
-                {% endif %}
-            </div>
-            <form action="/products/{{ p.id }}/ko_exit" method="POST">
+        <!-- 操作按鈕 -->
+        <div class="d-flex justify-content-end gap-2">
+            <a href="/products/{{ p.id }}/edit" class="btn btn-outline-primary btn-sm">修改</a>
+            <form action="/products/{{ p.id }}/ko_exit" method="POST" class="mb-0">
                 <button class="btn btn-outline-warning btn-sm"
                         onclick="return confirm('確認將 {{ p.product_code }} 移至已出場(KO)？')">
                     移至已出場 KO
