@@ -211,7 +211,8 @@ def generate_quote_image(params):
 
     # ── 發行機構列（淺粉紅底紅字，與表格同寬）──
     issuer = params.get('issuer', '')
-    issuer_display = f'發行機構  {issuer}'
+    issuer_cn = ISSUER_NAME.get(issuer, '')
+    issuer_display = f'發行機構  {issuer} {issuer_cn}' if issuer_cn else f'發行機構  {issuer}'
     draw.rectangle([x0, y, x0 + total_w, y + row_h], fill=PINK, outline=BLACK)
     _text_left(draw, x0, y, total_w, row_h, issuer_display, font_bold, RED)
     y += row_h
