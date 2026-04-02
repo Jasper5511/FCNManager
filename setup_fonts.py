@@ -25,12 +25,14 @@ def get_font_paths():
         if os.path.exists(p):
             return p, p
 
-    # 下載並轉換
+    # 下載並轉換（Regular + Bold 兩個字重）
     os.makedirs(FONT_DIR, exist_ok=True)
-    static_font = os.path.join(FONT_DIR, 'NotoSansTC-Static.ttf')
+    static_regular = os.path.join(FONT_DIR, 'NotoSansTC-Regular.ttf')
+    static_bold = os.path.join(FONT_DIR, 'NotoSansTC-Bold.ttf')
 
-    if os.path.exists(static_font) and os.path.getsize(static_font) > 100000:
-        return static_font, static_font
+    if (os.path.exists(static_regular) and os.path.getsize(static_regular) > 100000
+            and os.path.exists(static_bold) and os.path.getsize(static_bold) > 100000):
+        return static_regular, static_bold
 
     var_font = os.path.join(FONT_DIR, 'NotoSansTC-Variable.ttf')
     if not os.path.exists(var_font):
@@ -43,17 +45,38 @@ def get_font_paths():
             print(f'字型下載失敗: {e}')
             return None, None
 
-    # 移除可變字重表，轉為靜態字型（fpdf2 需要）
+    # 從可變字型產出 Regular(400) 和 Bold(700) 兩個靜態字型
     try:
         from fontTools.ttLib import TTFont
-        print('轉換字型為靜態格式...')
-        font = TTFont(var_font)
-        for tag in ['fvar', 'STAT', 'gvar', 'cvar', 'avar', 'HVAR', 'VVAR', 'MVAR']:
-            if tag in font:
-                del font[tag]
-        font.save(static_font)
-        print(f'靜態字型已產生 ({os.path.getsize(static_font)} bytes)')
-        return static_font, static_font
+        from fontTools.instancer import instantiateVariableFont
+
+        for weight, out_path in [(400, static_regular), (700, static_bold)]:
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 100000:
+                continue
+            print(f'產生字型 wght={weight}...')
+            font = TTFont(var_font)
+            instantiateVariableFont(font, {'wght': weight})
+            for tag in ['fvar', 'STAT', 'gvar', 'cvar', 'avar', 'HVAR', 'VVAR', 'MVAR']:
+                if tag in font:
+                    del font[tag]
+            font.save(out_path)
+            print(f'已產生 {out_path} ({os.path.getsize(out_path)} bytes)')
+
+        return static_regular, static_bold
+    except ImportError:
+        # 沒有 instancer，退回移除可變表的方式
+        print('fontTools.instancer 不可用，使用預設字重')
+        try:
+            from fontTools.ttLib import TTFont
+            font = TTFont(var_font)
+            for tag in ['fvar', 'STAT', 'gvar', 'cvar', 'avar', 'HVAR', 'VVAR', 'MVAR']:
+                if tag in font:
+                    del font[tag]
+            font.save(static_regular)
+            return static_regular, static_regular
+        except Exception as e:
+            print(f'字型轉換失敗: {e}')
+            return var_font, var_font
     except Exception as e:
         print(f'字型轉換失敗: {e}')
         return var_font, var_font
