@@ -110,6 +110,16 @@ class Position(db.Model):
         return None
 
 
+class ActivityLog(db.Model):
+    __tablename__ = 'activity_logs'
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('app_users.id'))
+    username   = db.Column(db.String(50))
+    action     = db.Column(db.String(200))
+    ip         = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class PriceHistory(db.Model):
     __tablename__ = 'price_history'
     id             = db.Column(db.Integer, primary_key=True)

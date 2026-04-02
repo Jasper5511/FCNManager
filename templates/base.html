@@ -40,6 +40,7 @@
             <a href="/reports" class="btn btn-outline-light btn-sm me-1">客戶報告</a>
             <a href="/export_excel" class="btn btn-outline-success btn-sm me-1">匯出 Excel</a>
             {% if is_admin %}<a href="/users" class="btn btn-outline-info btn-sm me-1">使用者管理</a>{% endif %}
+            {% if is_admin %}<a href="/activity" class="btn btn-outline-info btn-sm me-1">操作紀錄</a>{% endif %}
             {% if is_admin %}<a href="/line_settings" class="btn btn-outline-warning btn-sm me-1">LINE 設定</a>{% endif %}
             <a href="/change_password" class="btn btn-outline-light btn-sm me-1">改密碼</a>
             <a href="/logout" class="btn btn-outline-danger btn-sm">登出</a>

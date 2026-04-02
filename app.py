@@ -3,7 +3,7 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from functools import wraps
-from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser
+from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog
 from config import config
 from datetime import date, timedelta
 from dotenv import load_dotenv
@@ -76,7 +76,9 @@ def login():
         if user and user.check_password(request.form['password']):
             session['logged_in'] = True
             session['user_id'] = user.id
+            session['username'] = user.username
             session['is_admin'] = user.is_admin
+            log_activity('登入')
             return redirect(url_for('dashboard'))
         flash('帳號或密碼錯誤', 'danger')
     return render_template('login.html')
@@ -130,6 +132,22 @@ def inject_globals():
 
 def current_uid():
     return session.get('user_id')
+
+
+def log_activity(action):
+    """記錄使用者操作"""
+    try:
+        uid = session.get('user_id')
+        uname = session.get('username', '')
+        if not uname and uid:
+            u = AppUser.query.get(uid)
+            uname = u.username if u else ''
+        entry = ActivityLog(user_id=uid, username=uname, action=action,
+                            ip=request.remote_addr)
+        db.session.add(entry)
+        db.session.commit()
+    except Exception:
+        pass
 
 
 # ── 使用者管理（僅管理員）─────────────────────────────────────────────────────
@@ -396,6 +414,7 @@ def ko_history():
 @app.route('/fetch_prices')
 @login_required
 def fetch_prices():
+    log_activity('更新收盤價')
     from price_fetcher import fetch_quotes, fetch_history
 
     active = Product.query.filter_by(status='active', user_id=current_uid()).all()
@@ -962,6 +981,7 @@ def _make_single_product_pdf(pos, today, font_path):
 @login_required
 def client_report_single(cid, pid):
     """單一商品 PDF 報告"""
+    log_activity(f'客戶報告(單一) cid={cid} pid={pid}')
     from flask import send_file
     from setup_fonts import get_font_paths
 
@@ -981,6 +1001,7 @@ def client_report_single(cid, pid):
 @login_required
 def client_report(cid):
     """全部商品打包 — 單一商品直接回傳 PDF，多商品回傳 ZIP"""
+    log_activity(f'客戶報告(全部) cid={cid}')
     from io import BytesIO
     from flask import send_file
     from setup_fonts import get_font_paths
@@ -1062,6 +1083,7 @@ def _parse_date(s):
 @login_required
 def upload_ts():
     if request.method == 'POST':
+        log_activity('上傳 TS')
         from client_doc_generator import generate_client_doc_image
         from flask import send_file
         import tempfile
@@ -1100,6 +1122,7 @@ def quote():
 @app.route('/quote/generate', methods=['POST'])
 @login_required
 def generate_quote():
+    log_activity('報價產生')
     from quote_generator import generate_quote_image
     from flask import send_file
 
@@ -1179,6 +1202,17 @@ def line_webhook():
         app.logger.error(f'LINE Webhook error: {e}')
         return 'Error', 400
     return 'OK', 200
+
+
+# ── 操作紀錄 ────────────────────────────────────────────────────────────────
+@app.route('/activity')
+@login_required
+def activity_log():
+    if not session.get('is_admin'):
+        flash('僅管理員可查看', 'danger')
+        return redirect(url_for('dashboard'))
+    logs = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(200).all()
+    return render_template('activity.html', logs=logs)
 
 
 # ── 市場日報（網頁預覽 + LINE 推播）─────────────────────────────────────────
