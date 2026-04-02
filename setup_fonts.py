@@ -1,7 +1,7 @@
 """
 跨平台中文字型載入
-Windows: 微軟正黑體
-Linux/Render: 下載 Noto Sans TC 並轉為靜態字型
+Windows: 微軟正黑體 (Regular + Bold)
+Linux/Render: Noto Sans TC (Static Regular + Variable for Bold)
 """
 import os
 
@@ -25,16 +25,11 @@ def get_font_paths():
         if os.path.exists(p):
             return p, p
 
-    # 下載並轉換（Regular + Bold 兩個字重）
+    # 下載 Noto Sans TC 可變字型
     os.makedirs(FONT_DIR, exist_ok=True)
     static_regular = os.path.join(FONT_DIR, 'NotoSansTC-Regular.ttf')
-    static_bold = os.path.join(FONT_DIR, 'NotoSansTC-Bold.ttf')
-
-    if (os.path.exists(static_regular) and os.path.getsize(static_regular) > 100000
-            and os.path.exists(static_bold) and os.path.getsize(static_bold) > 100000):
-        return static_regular, static_bold
-
     var_font = os.path.join(FONT_DIR, 'NotoSansTC-Variable.ttf')
+
     if not os.path.exists(var_font):
         import urllib.request
         url = 'https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf'
@@ -45,38 +40,20 @@ def get_font_paths():
             print(f'字型下載失敗: {e}')
             return None, None
 
-    # 從可變字型產出 Regular(400) 和 Bold(700) 兩個靜態字型
-    try:
-        from fontTools.ttLib import TTFont
-        from fontTools.instancer import instantiateVariableFont
-
-        for weight, out_path in [(400, static_regular), (700, static_bold)]:
-            if os.path.exists(out_path) and os.path.getsize(out_path) > 100000:
-                continue
-            print(f'產生字型 wght={weight}...')
-            font = TTFont(var_font)
-            instantiateVariableFont(font, {'wght': weight})
-            for tag in ['fvar', 'STAT', 'gvar', 'cvar', 'avar', 'HVAR', 'VVAR', 'MVAR']:
-                if tag in font:
-                    del font[tag]
-            font.save(out_path)
-            print(f'已產生 {out_path} ({os.path.getsize(out_path)} bytes)')
-
-        return static_regular, static_bold
-    except ImportError:
-        # 沒有 instancer，退回移除可變表的方式
-        print('fontTools.instancer 不可用，使用預設字重')
+    # 產生靜態 Regular（fpdf2 需要靜態字型）
+    if not os.path.exists(static_regular) or os.path.getsize(static_regular) < 100000:
         try:
             from fontTools.ttLib import TTFont
+            print('轉換字型為靜態格式...')
             font = TTFont(var_font)
             for tag in ['fvar', 'STAT', 'gvar', 'cvar', 'avar', 'HVAR', 'VVAR', 'MVAR']:
                 if tag in font:
                     del font[tag]
             font.save(static_regular)
-            return static_regular, static_regular
+            print(f'靜態字型已產生 ({os.path.getsize(static_regular)} bytes)')
         except Exception as e:
             print(f'字型轉換失敗: {e}')
             return var_font, var_font
-    except Exception as e:
-        print(f'字型轉換失敗: {e}')
-        return var_font, var_font
+
+    # Regular=靜態（給 fpdf2）, Bold=可變字型（給 Pillow，透過 set_variation 設粗體）
+    return static_regular, var_font

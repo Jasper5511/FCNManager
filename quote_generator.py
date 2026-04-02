@@ -112,6 +112,16 @@ def generate_quote_image(params):
     font_bold = ImageFont.truetype(font_bold_path, 16)
     font_header = ImageFont.truetype(font_bold_path, 14)
 
+    # 可變字型：透過 Pillow 設定粗體字重（Linux/Render 適用）
+    for f in [font, font_bold, font_header]:
+        try:
+            f.set_variation_by_name('Bold')
+        except Exception:
+            try:
+                f.set_variation_by_axes(wght=700)
+            except Exception:
+                pass
+
     # ── 色彩 ──
     BLACK = (0, 0, 0)
     WHITE = (255, 255, 255)
