@@ -30,10 +30,7 @@
         <a class="navbar-brand" href="/">結構型商品</a>
         <div>
             <a href="/" class="btn btn-outline-light btn-sm me-1">持倉總覽</a>
-            <a href="/upload_ts" class="btn btn-outline-danger btn-sm me-1">客戶文件</a>
             <a href="/quote" class="btn btn-outline-warning btn-sm me-1">報價產生</a>
-            <a href="/daily_report" class="btn btn-outline-success btn-sm me-1">市場日報</a>
-            <a href="/briefing" class="btn btn-outline-info btn-sm me-1">晨會快報</a>
             <a href="/ko" class="btn btn-outline-warning btn-sm me-1">已出場(KO)</a>
             <a href="/products" class="btn btn-outline-light btn-sm me-1">所有商品</a>
             <a href="/clients" class="btn btn-outline-light btn-sm me-1">客戶</a>
@@ -41,6 +38,9 @@
             <a href="/export_excel" class="btn btn-outline-success btn-sm me-1">匯出 Excel</a>
             {% if is_admin %}<a href="/users" class="btn btn-outline-info btn-sm me-1">使用者管理</a>{% endif %}
             {% if is_admin %}<a href="/activity" class="btn btn-outline-info btn-sm me-1">操作紀錄</a>{% endif %}
+            {% if is_admin %}<a href="/upload_ts" class="btn btn-outline-danger btn-sm me-1">客戶文件</a>{% endif %}
+            {% if is_admin %}<a href="/daily_report" class="btn btn-outline-success btn-sm me-1">市場日報</a>{% endif %}
+            {% if is_admin %}<a href="/briefing" class="btn btn-outline-info btn-sm me-1">晨會快報</a>{% endif %}
             {% if is_admin %}<a href="/line_settings" class="btn btn-outline-warning btn-sm me-1">LINE 設定</a>{% endif %}
             <a href="/change_password" class="btn btn-outline-light btn-sm me-1">改密碼</a>
             <a href="/logout" class="btn btn-outline-danger btn-sm">登出</a>
