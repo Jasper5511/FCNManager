@@ -111,6 +111,15 @@ def _setup_scheduler():
                         app.logger.error(f'排程更新 user {user.id} 失敗: {e}')
                 app.logger.info('每日收盤價已自動更新')
 
+        def _keep_alive():
+            """每 10 分鐘 ping 自己，防止 Render 免費方案休眠"""
+            try:
+                import requests as _req
+                url = os.environ.get('RENDER_EXTERNAL_URL', 'https://fcnmanager.onrender.com')
+                _req.get(f'{url}/health', timeout=10)
+            except Exception:
+                pass
+
         scheduler = BackgroundScheduler()
         scheduler.add_job(_scheduled_price_update, 'cron', hour=6, minute=0,
                           timezone='Asia/Taipei', id='daily_price_update')
@@ -120,6 +129,8 @@ def _setup_scheduler():
         scheduler.add_job(_scheduled_price_update, 'date',
                           run_date=datetime.now() + timedelta(seconds=30),
                           id='startup_price_update')
+        # 每 10 分鐘 ping 自己，防止休眠
+        scheduler.add_job(_keep_alive, 'interval', minutes=10, id='keep_alive')
         scheduler.start()
         return scheduler
     except Exception as e:
@@ -145,6 +156,11 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
+
+
+@app.route('/health')
+def health():
+    return 'ok', 200
 
 
 @app.route('/login', methods=['GET', 'POST'])
