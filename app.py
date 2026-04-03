@@ -5,7 +5,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from functools import wraps
 from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog
 from config import config
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -54,51 +54,61 @@ def _setup_scheduler():
 
         def _scheduled_price_update():
             with app.app_context():
-                from price_fetcher import fetch_quotes, fetch_history
+                from price_fetcher import fetch_quotes
                 from dateutil.relativedelta import relativedelta
                 users = AppUser.query.all()
                 today = date.today()
                 for user in users:
-                    active = Product.query.filter_by(status='active', user_id=user.id).all()
-                    tickers = set()
-                    for p in active:
-                        for u in p.underlyings:
-                            if u.ticker:
-                                tickers.add(u.ticker)
-                    if not tickers:
-                        continue
-                    prices, price_date = fetch_quotes(tickers)
-                    if not prices:
-                        continue
-                    if not price_date:
-                        price_date = today - timedelta(days=1)
-                    for p in active:
-                        for u in p.underlyings:
-                            if not u.ticker:
-                                continue
-                            if u.ticker in prices:
-                                u.latest_price = prices[u.ticker]
-                                u.price_date = price_date
-                            if u.ko_level and not u.ko_hit and p.start_date:
-                                lockout = p.ko_lockout or 1
-                                ko_start = p.start_date + relativedelta(months=lockout)
-                                if today >= ko_start:
-                                    from price_fetcher import _HISTORY_SOURCES
-                                    ko_confirms = 0
-                                    for hist_fn in _HISTORY_SOURCES[:6]:
-                                        try:
-                                            df = hist_fn(u.ticker, ko_start, today)
-                                            if df is not None and not df.empty:
-                                                c = df['Close'].squeeze()
-                                                if (c >= u.ko_level).any():
-                                                    ko_confirms += 1
-                                                    if ko_confirms >= 2:
-                                                        break
-                                        except Exception:
-                                            continue
-                                    if ko_confirms >= 2:
-                                        u.ko_hit = True
-                    db.session.commit()
+                    try:
+                        active = Product.query.filter_by(status='active', user_id=user.id).all()
+                        tickers = set()
+                        for p in active:
+                            for u in p.underlyings:
+                                if u.ticker:
+                                    tickers.add(u.ticker)
+                        if not tickers:
+                            continue
+                        try:
+                            prices, price_date = fetch_quotes(tickers)
+                        except Exception:
+                            prices, price_date = {}, None
+                        if not prices:
+                            continue
+                        if not price_date:
+                            price_date = today - timedelta(days=1)
+                        for p in active:
+                            for u in p.underlyings:
+                                if not u.ticker:
+                                    continue
+                                try:
+                                    if u.ticker in prices:
+                                        u.latest_price = prices[u.ticker]
+                                        u.price_date = price_date
+                                    if u.ko_level and not u.ko_hit and p.start_date:
+                                        from price_fetcher import _HISTORY_SOURCES
+                                        lockout = p.ko_lockout or 1
+                                        ko_start = p.start_date + relativedelta(months=lockout)
+                                        if today >= ko_start:
+                                            ko_confirms = 0
+                                            for hist_fn in _HISTORY_SOURCES[:6]:
+                                                try:
+                                                    df = hist_fn(u.ticker, ko_start, today)
+                                                    if df is not None and not df.empty:
+                                                        c = df['Close'].squeeze()
+                                                        if (c >= u.ko_level).any():
+                                                            ko_confirms += 1
+                                                            if ko_confirms >= 2:
+                                                                break
+                                                except Exception:
+                                                    continue
+                                            if ko_confirms >= 2:
+                                                u.ko_hit = True
+                                except Exception:
+                                    db.session.rollback()
+                        db.session.commit()
+                    except Exception as e:
+                        db.session.rollback()
+                        app.logger.error(f'排程更新 user {user.id} 失敗: {e}')
                 app.logger.info('每日收盤價已自動更新')
 
         scheduler = BackgroundScheduler()
@@ -106,6 +116,10 @@ def _setup_scheduler():
                           timezone='Asia/Taipei', id='daily_price_update')
         scheduler.add_job(_scheduled_daily_report, 'cron', hour=7, minute=30,
                           timezone='Asia/Taipei', id='daily_report')
+        # 啟動後 30 秒執行一次更新（Render 重啟後馬上補抓）
+        scheduler.add_job(_scheduled_price_update, 'date',
+                          run_date=datetime.now() + timedelta(seconds=30),
+                          id='startup_price_update')
         scheduler.start()
         return scheduler
     except Exception as e:
@@ -454,6 +468,101 @@ def export_excel():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+# ── 背景靜默更新股價（使用者無感） ──────────────────────────────────────────
+import threading
+
+_bg_lock = threading.Lock()
+_bg_running = False
+
+def _maybe_bg_update(uid, active):
+    """價格過期時，背景執行緒靜默更新，不阻塞頁面載入"""
+    global _bg_running
+    if _bg_running:
+        return
+
+    today = date.today()
+    # 判斷是否有任何標的的價格日期 < 上一個交易日
+    needs_update = False
+    for p in active:
+        for u in p.underlyings:
+            if u.ticker and (not u.price_date or u.price_date < today - timedelta(days=2)):
+                needs_update = True
+                break
+        if needs_update:
+            break
+
+    if not needs_update:
+        return
+
+    def _do_update():
+        global _bg_running
+        with _bg_lock:
+            _bg_running = True
+        try:
+            with app.app_context():
+                from price_fetcher import fetch_quotes
+                from dateutil.relativedelta import relativedelta
+                all_products = Product.query.filter_by(status='active', user_id=uid).all()
+                tickers = set()
+                for p in all_products:
+                    for u in p.underlyings:
+                        if u.ticker:
+                            tickers.add(u.ticker)
+                if not tickers:
+                    return
+
+                try:
+                    prices, price_date = fetch_quotes(tickers)
+                except Exception:
+                    prices, price_date = {}, None
+
+                if not prices:
+                    return
+                if not price_date:
+                    price_date = today - timedelta(days=1)
+
+                for p in all_products:
+                    for u in p.underlyings:
+                        if not u.ticker:
+                            continue
+                        try:
+                            if u.ticker in prices:
+                                u.latest_price = prices[u.ticker]
+                                u.price_date = price_date
+                            if u.ko_level and not u.ko_hit and p.start_date:
+                                from price_fetcher import _HISTORY_SOURCES
+                                lockout = p.ko_lockout or 1
+                                ko_start = p.start_date + relativedelta(months=lockout)
+                                if today >= ko_start:
+                                    ko_confirms = 0
+                                    for hist_fn in _HISTORY_SOURCES[:6]:
+                                        try:
+                                            df = hist_fn(u.ticker, ko_start, today)
+                                            if df is not None and not df.empty:
+                                                c = df['Close'].squeeze()
+                                                if (c >= u.ko_level).any():
+                                                    ko_confirms += 1
+                                                    if ko_confirms >= 2:
+                                                        break
+                                        except Exception:
+                                            continue
+                                    if ko_confirms >= 2:
+                                        u.ko_hit = True
+                        except Exception:
+                            db.session.rollback()
+
+                try:
+                    db.session.commit()
+                    app.logger.info(f'背景靜默更新完成：{len(prices)} 檔')
+                except Exception:
+                    db.session.rollback()
+        finally:
+            with _bg_lock:
+                _bg_running = False
+
+    threading.Thread(target=_do_update, daemon=True).start()
+
+
 # ── 首頁：持倉總覽 ────────────────────────────────────────────────────────────
 @app.route('/')
 @login_required
@@ -463,6 +572,10 @@ def dashboard():
     except Exception as e:
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
+
+    # 檢查價格是否過期，過期就背景靜默更新（不阻塞頁面載入）
+    _maybe_bg_update(current_uid(), active)
+
     return render_template('dashboard.html', active=active, today=date.today())
 
 
