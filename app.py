@@ -501,7 +501,7 @@ def _maybe_bg_update(uid, active):
     needs_update = False
     for p in active:
         for u in p.underlyings:
-            if u.ticker and (not u.price_date or u.price_date < today - timedelta(days=2)):
+            if u.ticker and (not u.price_date or u.price_date < today - timedelta(days=1)):
                 needs_update = True
                 break
         if needs_update:
