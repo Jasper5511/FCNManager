@@ -164,6 +164,25 @@ def health():
     return 'ok', 200
 
 
+@app.route('/debug/prices')
+def debug_prices():
+    """診斷用：測試各報價來源在 Render 上是否能正常運作"""
+    import json
+    from price_fetcher import _QUOTE_SOURCES
+    today = date.today()
+    results = []
+    test_tickers = ['AAPL']
+    for fn in _QUOTE_SOURCES[:5]:
+        try:
+            prices, pdate = fn(test_tickers, today)
+            results.append({'source': fn.__name__, 'prices': prices,
+                           'date': str(pdate) if pdate else None, 'error': None})
+        except Exception as e:
+            results.append({'source': fn.__name__, 'prices': {},
+                           'date': None, 'error': str(e)})
+    return json.dumps(results, indent=2), 200, {'Content-Type': 'application/json'}
+
+
 @app.after_request
 def optimize_response(response):
     # 靜態檔案快取 1 天

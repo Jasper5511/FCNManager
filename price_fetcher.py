@@ -320,16 +320,35 @@ _QUOTE_SOURCES = [
     _q_nasdaqdatalink, _q_marketstack, _q_yahoo_direct, _q_google, _q_tradier,
 ]
 
+def _get_last_trading_date():
+    """用 yfinance 取得最近一個實際交易日的日期（最可靠）"""
+    try:
+        import yfinance as yf
+        data = yf.download('^GSPC', period='5d', progress=False, threads=False)
+        if not data.empty:
+            return data.index[-1].date()
+    except Exception:
+        pass
+    # fallback: 往回找最近的非週末日
+    d = date.today() - timedelta(days=1)
+    while d.weekday() >= 5:  # 5=Sat, 6=Sun
+        d -= timedelta(days=1)
+    return d
+
+
 def fetch_quotes(tickers):
     """抓取前收盤價（15 來源備援）→ ({ticker: price}, price_date)"""
     tickers = list(set(tickers))
     today = date.today()
+    actual_date = _get_last_trading_date()
+
     for fn in _QUOTE_SOURCES:
         try:
             prices, pdate = fn(tickers, today)
             if prices:
-                log.info(f'[quotes] {fn.__name__}: {len(prices)}/{len(tickers)} tickers')
-                return prices, pdate
+                # 統一用實際交易日日期，不信任各來源自己算的日期
+                log.info(f'[quotes] {fn.__name__}: {len(prices)}/{len(tickers)} tickers, date={actual_date}')
+                return prices, actual_date
         except Exception as e:
             log.debug(f'[quotes] {fn.__name__}: {e}')
     return {}, None
