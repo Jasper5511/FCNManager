@@ -3,6 +3,7 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from functools import wraps
+from sqlalchemy.orm import joinedload
 from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog
 from config import config
 from datetime import date, datetime, timedelta
@@ -161,6 +162,15 @@ def login_required(f):
 @app.route('/health')
 def health():
     return 'ok', 200
+
+
+@app.after_request
+def optimize_response(response):
+    # 靜態檔案快取 1 天
+    if request.path.startswith('/static/'):
+        response.cache_control.max_age = 86400
+        response.cache_control.public = True
+    return response
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -584,7 +594,9 @@ def _maybe_bg_update(uid, active):
 @login_required
 def dashboard():
     try:
-        active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+        active = Product.query.filter_by(status='active', user_id=current_uid()) \
+            .options(joinedload(Product.underlyings), joinedload(Product.positions).joinedload(Position.client)) \
+            .order_by(Product.created_at).all()
     except Exception as e:
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
@@ -608,79 +620,66 @@ def ko_history():
 @login_required
 def fetch_prices():
     log_activity('更新收盤價')
-    from price_fetcher import fetch_quotes, fetch_history
+    uid = current_uid()
 
-    active = Product.query.filter_by(status='active', user_id=current_uid()).all()
-    tickers = set()
-    for p in active:
-        for u in p.underlyings:
-            if u.ticker:
-                tickers.add(u.ticker)
-    if not tickers:
-        flash('沒有需要更新的標的', 'info')
-        return redirect(url_for('dashboard'))
-
-    today = date.today()
-    try:
-        prices, price_date = fetch_quotes(tickers)
-    except Exception:
-        prices, price_date = {}, None
-
-    if not prices:
-        flash('所有股價來源皆無法連線', 'danger')
-        return redirect(url_for('dashboard'))
-    if not price_date:
-        price_date = today - timedelta(days=1)
-
-    updated, errors = 0, []
-    for p in active:
-        for u in p.underlyings:
-            if not u.ticker:
-                continue
+    def _bg_fetch(uid):
+        with app.app_context():
+            from price_fetcher import fetch_quotes
+            from dateutil.relativedelta import relativedelta
+            active = Product.query.filter_by(status='active', user_id=uid).all()
+            tickers = set()
+            for p in active:
+                for u in p.underlyings:
+                    if u.ticker:
+                        tickers.add(u.ticker)
+            if not tickers:
+                return
+            today = date.today()
             try:
-                # 更新最新收盤價
-                if u.ticker in prices:
-                    u.latest_price = prices[u.ticker]
-                    u.price_date = price_date
-                    updated += 1
-
-                # 記憶式KO檢查：閉鎖期後開始，多來源交叉比對
-                if u.ko_level and not u.ko_hit and p.start_date:
-                    from dateutil.relativedelta import relativedelta
-                    from price_fetcher import _HISTORY_SOURCES
-                    lockout = p.ko_lockout or 1
-                    ko_start = p.start_date + relativedelta(months=lockout)
-                    if today >= ko_start:
-                        ko_confirms = 0
-                        for hist_fn in _HISTORY_SOURCES[:6]:
-                            try:
-                                df = hist_fn(u.ticker, ko_start, today)
-                                if df is not None and not df.empty:
-                                    c = df['Close'].squeeze()
-                                    if (c >= u.ko_level).any():
-                                        ko_confirms += 1
-                                        if ko_confirms >= 2:
-                                            break
-                            except Exception:
-                                continue
-                        if ko_confirms >= 2:
-                            u.ko_hit = True
-            except Exception as e:
-                errors.append(f'{u.ticker}: {e}')
+                prices, price_date = fetch_quotes(tickers)
+            except Exception:
+                prices, price_date = {}, None
+            if not prices:
+                return
+            if not price_date:
+                price_date = today - timedelta(days=1)
+            for p in active:
+                for u in p.underlyings:
+                    if not u.ticker:
+                        continue
+                    try:
+                        if u.ticker in prices:
+                            u.latest_price = prices[u.ticker]
+                            u.price_date = price_date
+                        if u.ko_level and not u.ko_hit and p.start_date:
+                            from price_fetcher import _HISTORY_SOURCES
+                            lockout = p.ko_lockout or 1
+                            ko_start = p.start_date + relativedelta(months=lockout)
+                            if today >= ko_start:
+                                ko_confirms = 0
+                                for hist_fn in _HISTORY_SOURCES[:6]:
+                                    try:
+                                        df = hist_fn(u.ticker, ko_start, today)
+                                        if df is not None and not df.empty:
+                                            c = df['Close'].squeeze()
+                                            if (c >= u.ko_level).any():
+                                                ko_confirms += 1
+                                                if ko_confirms >= 2:
+                                                    break
+                                    except Exception:
+                                        continue
+                                if ko_confirms >= 2:
+                                    u.ko_hit = True
+                    except Exception:
+                        db.session.rollback()
+            try:
+                db.session.commit()
+                app.logger.info(f'手動更新完成：user={uid}')
+            except Exception:
                 db.session.rollback()
 
-    try:
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        flash(f'資料庫寫入失敗：{str(e)}', 'danger')
-        return redirect(url_for('dashboard'))
-
-    msg = f'已更新 {updated} 檔標的收盤價（{price_date.strftime("%Y/%m/%d")}）'
-    if errors:
-        msg += f'，{len(errors)} 檔失敗'
-    flash(msg, 'success' if not errors else 'warning')
-
+    threading.Thread(target=_bg_fetch, args=(uid,), daemon=True).start()
+    flash('正在背景更新收盤價，約 10 秒後重新整理即可看到最新價格', 'info')
     return redirect(url_for('dashboard'))
 
 
