@@ -16,6 +16,11 @@ if hasattr(config[os.environ.get('FLASK_ENV', 'default')], 'init_app'):
     config[os.environ.get('FLASK_ENV', 'default')].init_app(app)
 db.init_app(app)
 
+@app.teardown_appcontext
+def cleanup_session(exception=None):
+    if exception:
+        db.session.rollback()
+
 with app.app_context():
     db.create_all()
     # 自動遷移：補上新欄位
@@ -531,6 +536,7 @@ def fetch_prices():
         db.session.commit()
         flash(f'已更新 {updated} 檔標的收盤價（{price_date.strftime("%Y/%m/%d")}）', 'success')
     except Exception as e:
+        db.session.rollback()
         flash(f'更新失敗：{str(e)}', 'danger')
 
     return redirect(url_for('dashboard'))
