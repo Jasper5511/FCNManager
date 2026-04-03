@@ -491,20 +491,24 @@ def fetch_prices():
         flash('沒有需要更新的標的', 'info')
         return redirect(url_for('dashboard'))
 
+    today = date.today()
     try:
-        today = date.today()
         prices, price_date = fetch_quotes(tickers)
-        if not prices:
-            flash('所有股價來源皆無法連線', 'danger')
-            return redirect(url_for('dashboard'))
-        if not price_date:
-            price_date = today - timedelta(days=1)
+    except Exception:
+        prices, price_date = {}, None
 
-        updated = 0
-        for p in active:
-            for u in p.underlyings:
-                if not u.ticker:
-                    continue
+    if not prices:
+        flash('所有股價來源皆無法連線', 'danger')
+        return redirect(url_for('dashboard'))
+    if not price_date:
+        price_date = today - timedelta(days=1)
+
+    updated, errors = 0, []
+    for p in active:
+        for u in p.underlyings:
+            if not u.ticker:
+                continue
+            try:
                 # 更新最新收盤價
                 if u.ticker in prices:
                     u.latest_price = prices[u.ticker]
@@ -532,12 +536,21 @@ def fetch_prices():
                                 continue
                         if ko_confirms >= 2:
                             u.ko_hit = True
+            except Exception as e:
+                errors.append(f'{u.ticker}: {e}')
+                db.session.rollback()
 
+    try:
         db.session.commit()
-        flash(f'已更新 {updated} 檔標的收盤價（{price_date.strftime("%Y/%m/%d")}）', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'更新失敗：{str(e)}', 'danger')
+        flash(f'資料庫寫入失敗：{str(e)}', 'danger')
+        return redirect(url_for('dashboard'))
+
+    msg = f'已更新 {updated} 檔標的收盤價（{price_date.strftime("%Y/%m/%d")}）'
+    if errors:
+        msg += f'，{len(errors)} 檔失敗'
+    flash(msg, 'success' if not errors else 'warning')
 
     return redirect(url_for('dashboard'))
 

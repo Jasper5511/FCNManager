@@ -12,6 +12,10 @@ DEFAULT_DB = 'sqlite:///' + os.path.join(instance_path, 'fcn_data.db')
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+    }
 
 
 class DevelopmentConfig(Config):
