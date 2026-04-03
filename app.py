@@ -1046,19 +1046,32 @@ def _make_single_product_pdf(pos, today, font_path):
              align='C', fill=True, new_x='LMARGIN', new_y='NEXT')
     pdf.ln(5)
 
+    # 先並行抓取所有標的歷史資料（大幅加速）
+    from concurrent.futures import ThreadPoolExecutor
+    from price_fetcher import fetch_history
+
+    uls = sorted(p.underlyings, key=lambda u: u.position_order or 0)
+    start_d = today - timedelta(days=365)
+    history_cache = {}
+
+    def _fetch_one(ticker):
+        try:
+            return ticker, fetch_history(ticker, start_d, today)
+        except Exception:
+            return ticker, None
+
+    tickers_to_fetch = [u.ticker for u in uls if u.ticker]
+    with ThreadPoolExecutor(max_workers=len(tickers_to_fetch) or 1) as pool:
+        for ticker, data in pool.map(_fetch_one, tickers_to_fetch):
+            if data is not None and not data.empty:
+                history_cache[ticker] = data
+
     # 圖表產生函數
     chart_files = []
 
     def make_chart(ticker_symbol, product_code, ko_level, strike_level, eki_level):
-        try:
-            from price_fetcher import fetch_history
-            from datetime import timedelta
-            start_d = today - timedelta(days=365)
-            data = fetch_history(ticker_symbol, start_d, today)
-            if data is None or data.empty:
-                return None
-        except Exception as e:
-            app.logger.warning(f'Chart data fetch failed for {ticker_symbol}: {e}')
+        data = history_cache.get(ticker_symbol)
+        if data is None:
             return None
         try:
             close = data['Close'].squeeze()
@@ -1100,7 +1113,6 @@ def _make_single_product_pdf(pos, today, font_path):
             return None
 
     # 持倉明細
-    uls = sorted(p.underlyings, key=lambda u: u.position_order or 0)
     has_eki = any(u.eki_level for u in uls)
 
     # 商品標題
