@@ -1363,6 +1363,89 @@ def upload_ts():
     return render_template('upload_ts.html')
 
 
+# ── FCN 結構型商品試算報告 ──────────────────────────────────────────────────────
+@app.route('/stock_options_report')
+@login_required
+def stock_options_report():
+    log_activity('結構商品試算報告')
+    from quote_generator import fetch_closing_prices, TICKER_NAME
+
+    tickers_param = request.args.get('tickers', 'TSM,TSLA,ORCL,AVGO')
+    tickers = [t.strip().upper() for t in tickers_param.split(',') if t.strip()]
+    strike_pct = float(request.args.get('strike_pct', '70')) / 100
+    coupon_rate = float(request.args.get('coupon', '12')) / 100
+    tenor_months = int(request.args.get('tenor', '6'))
+
+    prices, price_date = fetch_closing_prices(tickers, app)
+    price_date_str = price_date.strftime('%Y/%m/%d') if price_date else None
+
+    underlyings = []
+    for t in tickers:
+        price = prices.get(t)
+        strike_level = round(price * strike_pct, 2) if price else None
+        cushion = round((1 - strike_pct) * 100, 1) if price else None
+        underlyings.append({
+            'ticker': t,
+            'name': TICKER_NAME.get(t, ''),
+            'price': price,
+            'strike_level': strike_level,
+            'cushion': cushion,
+        })
+
+    sample_amount = 100000
+    sample_annual = sample_amount * coupon_rate
+    sample_monthly = sample_annual / 12
+    sample_total = sample_monthly * tenor_months
+
+    return render_template('stock_options_report.html',
+        report_date=date.today().strftime('%Y/%m/%d'),
+        tickers=tickers,
+        ticker_str=','.join(tickers),
+        strike_pct=strike_pct,
+        strike_pct_raw=int(strike_pct * 100),
+        coupon_rate=coupon_rate,
+        coupon_raw=int(coupon_rate * 100),
+        tenor_months=tenor_months,
+        underlyings=underlyings,
+        price_date_str=price_date_str,
+        sample_annual=sample_annual,
+        sample_monthly=sample_monthly,
+        sample_total=sample_total,
+    )
+
+
+@app.route('/stock_options_report/image')
+@login_required
+def generate_stock_options_image():
+    log_activity('結構商品試算圖片')
+    from quote_generator import generate_quote_image
+    from flask import send_file
+
+    tickers_param = request.args.get('tickers', 'TSM,TSLA,ORCL,AVGO')
+    tickers = [t.strip().upper() for t in tickers_param.split(',') if t.strip()]
+    strike_pct = float(request.args.get('strike_pct', '70')) / 100
+    coupon_rate = float(request.args.get('coupon', '12')) / 100
+    tenor_months = int(request.args.get('tenor', '6'))
+
+    params = {
+        'product_type': 'FCN',
+        'tenor': f'{tenor_months}M',
+        'strike_pct': strike_pct,
+        'ko_pct': 1.0,
+        'coupon': coupon_rate,
+        'eki_pct': None,
+        'ko_start': '1M',
+        'memory_ko': True,
+        'currency': 'USD',
+        'issuer': '',
+        'tickers': tickers,
+    }
+
+    buf, price_date = generate_quote_image(params)
+    filename = f'FCN試算_{date.today().strftime("%Y%m%d")}.png'
+    return send_file(buf, download_name=filename, as_attachment=True, mimetype='image/png')
+
+
 # ── 報價圖片產生器 ─────────────────────────────────────────────────────────────
 @app.route('/quote')
 @login_required

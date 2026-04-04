@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">FCN 結構型商品試算報告</h5>
+                <span class="text-muted" style="font-size:0.85rem;">報告日期：{{ report_date }}</span>
+            </div>
+            <div class="card-body">
+                <!-- 商品參數總覽 -->
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <table class="table table-sm table-bordered mb-0">
+                            <tbody>
+                                <tr>
+                                    <td class="fw-bold" style="background:#f0f0f0; width:40%;">商品類型</td>
+                                    <td>FCN (固定配息)</td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold" style="background:#f0f0f0;">天期 Tenor</td>
+                                    <td>{{ tenor_months }}M（{{ tenor_months }}個月）</td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold" style="background:#f0f0f0;">預計執行價 Strike</td>
+                                    <td class="text-danger fw-bold">{{ '%.0f' | format(strike_pct * 100) }}%</td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold" style="background:#f0f0f0;">年化配息率 Coupon</td>
+                                    <td class="text-danger fw-bold">{{ '%.0f' | format(coupon_rate * 100) }}%</td>
+                                </tr>
+                                <tr>
+                                    <td class="fw-bold" style="background:#f0f0f0;">幣別</td>
+                                    <td>USD</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card border-primary">
+                            <div class="card-body text-center">
+                                <h6 class="text-primary mb-3">收益試算（以 USD 100,000 為例）</h6>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <div class="text-muted" style="font-size:0.8rem;">年化配息</div>
+                                        <div class="fw-bold text-danger fs-5">{{ '{:,.0f}'.format(sample_annual) }}</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="text-muted" style="font-size:0.8rem;">月配息</div>
+                                        <div class="fw-bold text-danger fs-5">{{ '{:,.0f}'.format(sample_monthly) }}</div>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <div class="text-muted" style="font-size:0.8rem;">{{ tenor_months }}個月總配息</div>
+                                        <div class="fw-bold fs-5">{{ '{:,.0f}'.format(sample_total) }}</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="text-muted" style="font-size:0.8rem;">投入本金</div>
+                                        <div class="fw-bold fs-5">100,000</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 連結標的明細 -->
+                <h6 class="section-title">連結標的明細</h6>
+                {% if price_date_str %}
+                <p class="text-muted mb-2" style="font-size:0.85rem;">收盤價日期：{{ price_date_str }}</p>
+                {% endif %}
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover align-middle">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>連結標的</th>
+                                <th class="text-end">參考進場價</th>
+                                <th class="text-end">預計執行價 ({{ '%.0f' | format(strike_pct * 100) }}%)</th>
+                                <th class="text-end">下檔保護空間</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in underlyings %}
+                            <tr>
+                                <td>
+                                    <span class="fw-bold">{{ item.ticker }}</span>
+                                    <span class="text-muted">{{ item.name }}</span>
+                                </td>
+                                <td class="text-end">
+                                    {% if item.price %}
+                                        {{ '{:,.2f}'.format(item.price) }}
+                                    {% else %}
+                                        <span class="text-muted">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    {% if item.strike_level %}
+                                        {{ '{:,.2f}'.format(item.strike_level) }}
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    {% if item.price and item.strike_level %}
+                                        <span class="text-success fw-bold">{{ '%.1f' | format(item.cushion) }}%</span>
+                                    {% else %}
+                                        ---
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 情境分析 -->
+                <h6 class="section-title">情境分析（{{ tenor_months }}個月後到期）</h6>
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm align-middle">
+                        <thead style="background:#e8f4e8;">
+                            <tr>
+                                <th>情境</th>
+                                <th>條件</th>
+                                <th>結果</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="fw-bold text-success">最佳情境</td>
+                                <td>所有標的到期時 ≥ 期初價格</td>
+                                <td>取回全部本金 + {{ '{:,.0f}'.format(sample_total) }} 配息收入（以 100K 為例）</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold text-warning">中性情境</td>
+                                <td>最差標的跌幅未超過 {{ '%.0f' | format((1 - strike_pct) * 100) }}%</td>
+                                <td>取回全部本金 + {{ '{:,.0f}'.format(sample_total) }} 配息收入</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold text-danger">最差情境</td>
+                                <td>最差標的跌破執行價（跌超過 {{ '%.0f' | format((1 - strike_pct) * 100) }}%）</td>
+                                <td>以執行價轉換為股票 + 已收配息</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 下載按鈕 -->
+                <div class="text-end mt-3">
+                    <a href="{{ url_for('generate_stock_options_image', tickers=ticker_str, strike_pct=strike_pct_raw, coupon=coupon_raw, tenor=tenor_months) }}"
+                       class="btn btn-primary">
+                        下載報價圖片
+                    </a>
+                    <button onclick="window.print()" class="btn btn-outline-secondary ms-2">列印報告</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 風險提示 -->
+        <div class="card mb-4 border-warning">
+            <div class="card-header bg-warning bg-opacity-10">
+                <h6 class="mb-0 text-warning">風險提示</h6>
+            </div>
+            <div class="card-body" style="font-size:0.85rem;">
+                <ul class="mb-0">
+                    <li>本報告僅供參考，不構成投資建議。</li>
+                    <li>FCN 為結構型商品，投資人可能面臨本金損失風險。</li>
+                    <li>若最差表現標的於到期時跌破執行價（{{ '%.0f' | format(strike_pct * 100) }}%），投資人將以執行價承接股票。</li>
+                    <li>配息不保證未來收益，實際報酬取決於標的走勢。</li>
+                    <li>收盤價為前一交易日數據，實際交易價格可能不同。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
