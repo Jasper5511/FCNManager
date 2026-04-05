@@ -1115,7 +1115,7 @@ def _make_single_product_pdf(pos, today, font_path):
     # 圖表產生函數
     chart_files = []
 
-    def make_chart(ticker_symbol, product_code, ko_level, strike_level, eki_level, strike_pct=None, eki_pct=None):
+    def make_chart(ticker_symbol, product_code, ko_level, strike_level, eki_level, strike_pct=None, eki_pct=None, ticker_name=''):
         data = history_cache.get(ticker_symbol) if 'history_cache' in dir() or 'history_cache' in locals() else None
         if data is None:
             try:
@@ -1133,7 +1133,8 @@ def _make_single_product_pdf(pos, today, font_path):
             volume = data['Volume'].squeeze() if 'Volume' in data.columns else close * 0
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 4.5), height_ratios=[3, 1], sharex=True)
             fig.subplots_adjust(hspace=0.05)
-            ax1.plot(close.index, close.values, color='#e74c3c', linewidth=2.5, label=ticker_symbol)
+            _display = f'{ticker_symbol} {ticker_name}' if ticker_name else ticker_symbol
+            ax1.plot(close.index, close.values, color='#e74c3c', linewidth=2.5, label=_display)
             if ko_level:
                 ax1.axhline(y=ko_level, color='#e74c3c', linestyle='--', linewidth=1.5, label=f'期初價格({ko_level:,.2f})')
             if strike_level:
@@ -1146,7 +1147,8 @@ def _make_single_product_pdf(pos, today, font_path):
             ax1.annotate(f'{last_price:.2f}', xy=(close.index[-1], last_price),
                         fontsize=10, fontweight='bold', color='#e74c3c',
                         xytext=(10, 5), textcoords='offset points')
-            ax1.set_title(f'{ticker_symbol} - {product_code}', fontsize=13, fontweight='bold', pad=10)
+            _title = f'{ticker_symbol} {ticker_name} - {product_code}' if ticker_name else f'{ticker_symbol} - {product_code}'
+            ax1.set_title(_title, fontsize=13, fontweight='bold', pad=10)
             ax1.legend(loc='upper left', fontsize=8, framealpha=0.9)
             ax1.set_ylabel('Price (USD)', fontsize=9)
             ax1.grid(True, alpha=0.3)
@@ -1245,7 +1247,7 @@ def _make_single_product_pdf(pos, today, font_path):
     for u in uls:
         if not u.ticker:
             continue
-        chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level, p.strike_pct, p.eki_pct)
+        chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level, p.strike_pct, p.eki_pct, TICKER_NAME.get(u.ticker, ''))
         if chart_path:
             chart_files.append(chart_path)
             chart_paths.append(chart_path)
