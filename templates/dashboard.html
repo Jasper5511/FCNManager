@@ -1,65 +1,66 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">庫存總覽 <small class="text-muted">{{ today.strftime('%Y/%m/%d') }}</small></h5>
-    <div>
-        <a href="/fetch_prices" class="btn btn-outline-info btn-sm me-1">更新收盤價</a>
+<div class="page-header">
+    <h5>
+        庫存總覽
+        <span class="page-date">{{ today.strftime('%Y/%m/%d') }}</span>
+        {% if active %}<span class="badge bg-primary nav-badge" style="font-size:0.7rem;">{{ active|length }}</span>{% endif %}
+    </h5>
+    <div class="page-actions">
+        <div class="search-bar">
+            <span class="search-icon">&#128269;</span>
+            <input type="text" class="form-control" id="dashSearch" placeholder="搜尋商品、客戶、標的...">
+        </div>
+        <a href="/fetch_prices" class="btn btn-outline-info btn-sm">更新收盤價</a>
         <a href="/products/add" class="btn btn-primary btn-sm">+ 新增商品</a>
     </div>
 </div>
 
-<!-- DEBUG: active count = {{ active|length }} -->
 {% if active %}
 {% for p in active %}
-<div class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center py-2"
-         style="background:#1a1a2e; color:#fff;">
-        <div>
+<div class="card product-card fade-in" data-searchable>
+    <div class="card-header-fcn">
+        <div class="product-info">
             {% for pos in p.positions %}
-            <span class="badge bg-light text-dark me-2" style="font-size:0.8rem;">
-                {{ pos.client.name_masked }}｜{{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}｜月配 {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}
+            <span class="client-badge">
+                {{ pos.client.name_masked }} | {{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }} | 月配 {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}
             </span>
             {% endfor %}
-            <a href="/products/{{ p.id }}" class="text-white fw-bold text-decoration-none" style="font-size:1.05rem;">
-                {{ p.product_code }}
-            </a>
-            <span class="ms-2">{{ p.issuer or '' }}</span>
-            <span class="ms-2">{{ p.tenor_months }}M</span>
-            <span class="ms-2">{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '' }}</span>
+            <a href="/products/{{ p.id }}" class="product-code">{{ p.product_code }}</a>
+            <span class="product-meta">{{ p.issuer or '' }}&nbsp;&nbsp;&nbsp;{{ p.tenor_months }}M&nbsp;&nbsp;&nbsp;{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '' }}</span>
         </div>
-        <div>
+        <div class="d-flex align-items-center gap-2">
             {% set d = p.days_to_maturity %}
             {% if d is not none %}
-                <span class="badge {{ 'bg-danger' if d < 30 else 'bg-warning text-dark' if d < 90 else 'bg-success' }}">
+                <span class="days-badge {{ 'danger' if d < 30 else 'warning' if d < 90 else 'ok' }}">
                     剩 {{ d }} 天
                 </span>
             {% endif %}
             {% if p.all_ko_hit %}
-                <span class="badge bg-danger ms-1">全部達KO</span>
+                <span class="badge bg-danger">全部達KO</span>
             {% endif %}
         </div>
     </div>
-    <div class="card-body p-3">
-        <!-- 商品基本資料 -->
-        <div class="row mb-2" style="font-size:0.88rem;">
-            <div class="col-auto"><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}{% if p.ko_type == 'stepdown' %} <span class="text-warning">(Stepdown)</span>{% endif %}</div>
-            <div class="col-auto"><strong>Strike：</strong>{{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '-' }}</div>
-            <div class="col-auto"><strong>EKI：</strong>{{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }}</div>
-            <div class="col-auto"><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date and p.trade_date is not string else (p.trade_date or '-') }}</div>
-            <div class="col-auto"><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date and p.start_date is not string else (p.start_date or '-') }}</div>
-            <div class="col-auto"><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date and p.maturity_date is not string else (p.maturity_date or '-') }}</div>
+    <div class="card-body">
+        <div class="product-params">
+            <div><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}{% if p.ko_type == 'stepdown' %} <span class="text-warning">(Stepdown)</span>{% endif %}</div>
+            <div><strong>Strike：</strong>{{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '-' }}</div>
+            <div><strong>EKI：</strong>{{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }}</div>
+            <div><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date and p.trade_date is not string else (p.trade_date or '-') }}</div>
+            <div><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date and p.start_date is not string else (p.start_date or '-') }}</div>
+            <div><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date and p.maturity_date is not string else (p.maturity_date or '-') }}</div>
         </div>
         {% if p.special_notes %}
-        <div class="mb-2" style="font-size:0.82rem; color:#888;">{{ p.special_notes }}</div>
+        <div class="mb-2" style="font-size:0.82rem; color:var(--fcn-text-muted);">{{ p.special_notes }}</div>
         {% endif %}
 
-        <!-- 標的表格 -->
         {% if p.underlyings %}
-        <table class="table table-sm table-bordered mb-2" style="font-size:0.88rem;">
-            <thead class="table-light">
+        <div class="table-scroll">
+        <table class="table table-fcn">
+            <thead>
                 <tr>
-                    <th>標的</th>
+                    <th>連結標的</th>
                     <th class="text-end">期初價格</th>
                     <th class="text-end">提前出場價 ({{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '' }})</th>
                     <th class="text-end">執行價 ({{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '' }})</th>
@@ -75,12 +76,12 @@
             <tbody>
             {% for u in p.underlyings|sort(attribute='position_order') %}
             <tr>
-                <td class="fw-bold">{{ u.ticker }} <small class="text-muted">{{ TICKER_NAME.get(u.ticker, '') }}</small></td>
-                <td class="text-end">{{ '{:,.4f}'.format(u.initial_price) if u.initial_price else '-' }}</td>
-                <td class="text-end">{{ '{:,.4f}'.format(u.ko_level) if u.ko_level else '-' }}</td>
-                <td class="text-end">{{ '{:,.4f}'.format(u.strike_level) if u.strike_level else '-' }}</td>
-                <td class="text-end">{{ '{:,.4f}'.format(u.eki_level) if u.eki_level else '-' }}</td>
-                <td class="text-end {{ 'price-above' if u.latest_price and u.ko_level and u.latest_price >= u.ko_level else '' }}">
+                <td class="fw-bold"><a href="https://tw.tradingview.com/symbols/{{ u.ticker }}/" target="_blank" class="text-decoration-none" style="color:var(--fcn-text);">{{ u.ticker }} <small class="text-muted">{{ TICKER_NAME.get(u.ticker, '') }}</small></a></td>
+                <td class="text-end text-mono">{{ '{:,.4f}'.format(u.initial_price) if u.initial_price else '-' }}</td>
+                <td class="text-end text-mono">{{ '{:,.4f}'.format(u.ko_level) if u.ko_level else '-' }}</td>
+                <td class="text-end text-mono">{{ '{:,.4f}'.format(u.strike_level) if u.strike_level else '-' }}</td>
+                <td class="text-end text-mono">{{ '{:,.4f}'.format(u.eki_level) if u.eki_level else '-' }}</td>
+                <td class="text-end text-mono {{ 'price-above' if u.latest_price and u.ko_level and u.latest_price >= u.ko_level else '' }}">
                     {% if u.latest_price %}{{ '{:,.2f}'.format(u.latest_price) }}{% else %}-{% endif %}
                 </td>
                 <td class="text-center">
@@ -93,8 +94,8 @@
                     {% endif %}
                 </td>
                 <td class="text-center">
-                    <button class="btn btn-sm {{ 'btn-danger' if u.ko_hit else 'btn-outline-secondary' }} ko-toggle"
-                            data-pid="{{ p.id }}" data-uid="{{ u.id }}" style="min-width:36px;">
+                    <button class="btn btn-sm {{ 'btn-danger ko-toggle active' if u.ko_hit else 'btn-outline-secondary ko-toggle' }}"
+                            data-pid="{{ p.id }}" data-uid="{{ u.id }}">
                         {% if u.ko_hit %}&#10003;{% else %}&#10007;{% endif %}
                     </button>
                 </td>
@@ -102,37 +103,34 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
         {% endif %}
 
-        <!-- 操作按鈕 -->
-        <div class="d-flex justify-content-end gap-2">
+        <div class="d-flex justify-content-end gap-2 mt-2">
             <a href="/products/{{ p.id }}/edit" class="btn btn-outline-primary btn-sm">修改</a>
-            <form action="/products/{{ p.id }}/ko_exit" method="POST" class="mb-0">
-                <button class="btn btn-outline-warning btn-sm"
-                        onclick="return confirm('確認將 {{ p.product_code }} 移至已出場(KO)？')">
-                    移至已出場 KO
-                </button>
+            <form action="/products/{{ p.id }}/ko_exit" method="POST" class="mb-0" data-confirm="確認將 {{ p.product_code }} 移至已出場(KO)？">
+                <button type="submit" class="btn btn-outline-warning btn-sm">移至已出場 KO</button>
             </form>
         </div>
     </div>
 </div>
 {% endfor %}
 {% else %}
-<div class="alert alert-info">目前沒有持倉中的商品。</div>
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-icon">&#128202;</div>
+        <h6>目前沒有持倉中的商品</h6>
+        <p>新增你的第一個 FCN 商品，開始管理投資組合</p>
+        <a href="/products/add" class="btn btn-primary btn-sm">+ 新增商品</a>
+    </div>
+</div>
 {% endif %}
 
 {% endblock %}
 
 {% block scripts %}
 <script>
-document.querySelectorAll('.ko-toggle').forEach(btn => {
-    btn.addEventListener('click', async () => {
-        const pid = btn.dataset.pid, uid = btn.dataset.uid;
-        const res = await fetch(`/products/${pid}/toggle_ko/${uid}`, {method:'POST'});
-        const data = await res.json();
-        btn.innerHTML = data.ko_hit ? '&#10003;' : '&#10007;';
-        btn.className = `btn btn-sm ${data.ko_hit ? 'btn-danger' : 'btn-outline-secondary'} ko-toggle`;
-    });
-});
+    FCN.initSearch('#dashSearch', '[data-searchable]', '.client-badge, .product-code, .product-meta, .fw-bold, .product-params');
+
 </script>
 {% endblock %}

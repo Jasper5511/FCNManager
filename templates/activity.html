@@ -1,9 +1,12 @@
 {% extends 'base.html' %}
 {% block content %}
-<h5 class="mb-3">操作紀錄</h5>
-<div class="card p-0">
-    <table class="table table-hover table-sm mb-0">
-        <thead class="table-dark">
+<div class="page-header">
+    <h5>操作紀錄</h5>
+</div>
+<div class="card">
+    <div class="table-scroll">
+    <table class="table table-fcn">
+        <thead>
             <tr>
                 <th>時間 (UTC)</th>
                 <th>帳號</th>
@@ -14,7 +17,7 @@
         <tbody>
         {% for log in logs %}
         <tr>
-            <td>{{ log.created_at.strftime('%Y/%m/%d %H:%M:%S') }}</td>
+            <td class="text-mono" style="font-size:0.82rem;">{{ log.created_at.strftime('%Y/%m/%d %H:%M:%S') }}</td>
             <td class="fw-bold">{{ log.username }}</td>
             <td>{{ log.action }}</td>
             <td><small class="text-muted">{{ log.ip or '-' }}</small></td>
@@ -22,5 +25,6 @@
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endblock %}

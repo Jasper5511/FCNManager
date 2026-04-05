@@ -1,16 +1,25 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">客戶管理</h5>
-    <a href="/clients/add" class="btn btn-primary btn-sm">+ 新增客戶</a>
+<div class="page-header">
+    <h5>客戶管理 {% if clients %}<span class="badge bg-primary nav-badge" style="font-size:0.7rem;">{{ clients|length }}</span>{% endif %}</h5>
+    <div class="page-actions">
+        <div class="search-bar">
+            <span class="search-icon">&#128269;</span>
+            <input type="text" class="form-control" id="clientSearch" placeholder="搜尋客戶...">
+        </div>
+        <a href="/clients/add" class="btn btn-primary btn-sm">+ 新增客戶</a>
+    </div>
 </div>
-<div class="card p-0">
-    <table class="table table-hover mb-0">
-        <thead class="table-dark">
+
+{% if clients %}
+<div class="card">
+    <div class="table-scroll">
+    <table class="table table-fcn">
+        <thead>
             <tr>
                 <th>客戶姓名</th>
-                <th>持倉中</th>
-                <th>已出場/到期</th>
+                <th class="text-center">持倉中</th>
+                <th class="text-center">已出場/到期</th>
                 <th>目前部位</th>
                 <th>歷史紀錄</th>
                 <th class="text-center">操作</th>
@@ -18,34 +27,50 @@
         </thead>
         <tbody>
         {% for c in clients %}
-        <tr>
+        <tr data-client-row>
             <td class="fw-bold">{{ c.name_masked }}</td>
-            <td>{{ c.positions|selectattr('product.status', 'equalto', 'active')|list|length }}</td>
-            <td>{{ c.positions|rejectattr('product.status', 'equalto', 'active')|list|length }}</td>
+            <td class="text-center">{{ c.positions|selectattr('product.status', 'equalto', 'active')|list|length }}</td>
+            <td class="text-center">{{ c.positions|rejectattr('product.status', 'equalto', 'active')|list|length }}</td>
             <td>
                 {% for pos in c.positions if pos.product.status == 'active' %}
-                    <span class="badge bg-primary me-1">
+                    <span class="badge bg-primary me-1" style="font-size:0.72rem;">
                         {{ pos.product.product_code }} {{ pos.product.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '' }}
                     </span>
                 {% endfor %}
             </td>
             <td>
                 {% for pos in c.positions if pos.product.status != 'active' %}
-                    <span class="badge bg-secondary me-1">
+                    <span class="badge bg-secondary me-1" style="font-size:0.72rem;">
                         {{ pos.product.product_code }}
                         {% if pos.product.status == 'ko_exited' %}(KO){% else %}(到期){% endif %}
                     </span>
                 {% endfor %}
             </td>
             <td class="text-center">
-                <form action="/clients/{{ c.id }}/delete" method="POST" class="d-inline">
-                    <button class="btn btn-outline-danger btn-sm"
-                            onclick="return confirm('確認刪除客戶 {{ c.name_masked }}？')">刪除</button>
+                <form action="/clients/{{ c.id }}/delete" method="POST" class="d-inline" data-confirm="確認刪除客戶 {{ c.name_masked }}？">
+                    <button type="submit" class="btn btn-outline-danger btn-sm">刪除</button>
                 </form>
             </td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-icon">&#128101;</div>
+        <h6>尚無客戶資料</h6>
+        <p>新增你的第一位客戶，開始建立客戶管理</p>
+        <a href="/clients/add" class="btn btn-primary btn-sm">+ 新增客戶</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    FCN.initSearch('#clientSearch', '[data-client-row]', 'td');
+</script>
 {% endblock %}

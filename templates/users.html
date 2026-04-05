@@ -1,14 +1,15 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">使用者管理</h5>
+<div class="page-header">
+    <h5>使用者管理</h5>
 </div>
 
 <div class="row">
     <div class="col-md-7">
-        <div class="card p-0">
-            <table class="table table-hover mb-0">
-                <thead class="table-dark">
+        <div class="card">
+            <div class="table-scroll">
+            <table class="table table-fcn">
+                <thead>
                     <tr>
                         <th>帳號</th>
                         <th>角色</th>
@@ -20,17 +21,16 @@
                 {% for u in users %}
                 <tr>
                     <td class="fw-bold">{{ u.username }}</td>
-                    <td><span class="badge {{ 'bg-danger' if u.is_admin else 'bg-secondary' }}">{{ '管理員' if u.is_admin else '使用者' }}</span></td>
+                    <td><span class="badge badge-status {{ 'bg-danger' if u.is_admin else 'bg-secondary' }}">{{ '管理員' if u.is_admin else '使用者' }}</span></td>
                     <td>{{ u.created_at.strftime('%Y/%m/%d') if u.created_at else '-' }}</td>
                     <td class="text-center">
                         {% if not u.is_admin %}
                         <form action="/users/{{ u.id }}/reset" method="POST" class="d-inline">
                             <input name="new_password" type="text" placeholder="新密碼" class="form-control form-control-sm d-inline" style="width:100px;" required>
-                            <button class="btn btn-outline-primary btn-sm">重設密碼</button>
+                            <button class="btn btn-outline-primary btn-sm">重設</button>
                         </form>
-                        <form action="/users/{{ u.id }}/delete" method="POST" class="d-inline ms-1">
-                            <button class="btn btn-outline-danger btn-sm"
-                                    onclick="return confirm('確認刪除 {{ u.username }}？')">刪除</button>
+                        <form action="/users/{{ u.id }}/delete" method="POST" class="d-inline ms-1" data-confirm="確認刪除 {{ u.username }}？">
+                            <button type="submit" class="btn btn-outline-danger btn-sm">刪除</button>
                         </form>
                         {% else %}
                         <span class="text-muted">-</span>
@@ -40,18 +40,19 @@
                 {% endfor %}
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
 
     <div class="col-md-5">
         <div class="card p-4">
-            <h6 class="fw-bold mb-3">新增使用者</h6>
+            <h6 class="fw-bold mb-3" style="font-size:0.95rem;">新增使用者</h6>
             <form action="/users/add" method="POST">
                 <div class="mb-2">
                     <label class="form-label">帳號</label>
                     <input name="username" class="form-control" required>
                 </div>
-                <div class="mb-2">
+                <div class="mb-3">
                     <label class="form-label">密碼</label>
                     <input name="password" type="text" class="form-control" required>
                 </div>

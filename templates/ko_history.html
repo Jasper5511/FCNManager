@@ -1,39 +1,39 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">已提前出場 (KO)</h5>
-    <a href="/" class="btn btn-outline-secondary btn-sm">返回總覽</a>
+<div class="page-header">
+    <h5>已提前出場 (KO) {% if products %}<span class="badge bg-secondary nav-badge" style="font-size:0.7rem;">{{ products|length }}</span>{% endif %}</h5>
+    <div class="page-actions">
+        <a href="/" class="btn btn-outline-secondary btn-sm">返回總覽</a>
+    </div>
 </div>
 
 {% if products %}
 {% for p in products %}
-<div class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center py-2"
-         style="background:#6c757d; color:#fff;">
+<div class="card product-card fade-in">
+    <div class="card-header-ko d-flex justify-content-between align-items-center py-2 px-3">
         <div>
             <a href="/products/{{ p.id }}" class="text-white fw-bold text-decoration-none">{{ p.product_code }}</a>
-            <span class="ms-2">{{ p.issuer or '' }}</span>
-            <span class="ms-2">{{ p.tenor_months }}M</span>
-            <span class="ms-2">{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '' }}</span>
+            <span class="ms-2" style="color:rgba(255,255,255,0.7);">{{ p.issuer or '' }}&nbsp;&nbsp;&nbsp;{{ p.tenor_months }}M&nbsp;&nbsp;&nbsp;{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '' }}</span>
         </div>
-        <span class="badge bg-warning text-dark">已出場</span>
+        <span class="badge bg-warning text-dark badge-status">已出場</span>
     </div>
-    <div class="card-body p-3">
-        <div class="row mb-2" style="font-size:0.88rem;">
-            <div class="col-auto"><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}</div>
-            <div class="col-auto"><strong>Strike：</strong>{{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '-' }}</div>
-            <div class="col-auto"><strong>EKI：</strong>{{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }}</div>
-            <div class="col-auto"><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date else '-' }}</div>
-            <div class="col-auto"><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date else '-' }}</div>
-            <div class="col-auto"><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</div>
+    <div class="card-body">
+        <div class="product-params">
+            <div><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}</div>
+            <div><strong>Strike：</strong>{{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '-' }}</div>
+            <div><strong>EKI：</strong>{{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }}</div>
+            <div><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date else '-' }}</div>
+            <div><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date else '-' }}</div>
+            <div><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</div>
         </div>
 
         {% if p.underlyings %}
-        <table class="table table-sm table-bordered mb-2" style="font-size:0.88rem;">
-            <thead class="table-light">
+        <div class="table-scroll">
+        <table class="table table-fcn">
+            <thead>
                 <tr>
-                    <th>標的</th>
+                    <th>連結標的</th>
                     <th class="text-end">期初價格</th>
                     <th class="text-end">提前出場價</th>
                     <th class="text-end">執行價</th>
@@ -44,32 +44,29 @@
             {% for u in p.underlyings|sort(attribute='position_order') %}
             <tr>
                 <td class="fw-bold">{{ u.ticker }}</td>
-                <td class="text-end">{{ '{:,.2f}'.format(u.initial_price) if u.initial_price else '-' }}</td>
-                <td class="text-end">{{ '{:,.2f}'.format(u.ko_level) if u.ko_level else '-' }} <small class="text-muted">({{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '' }})</small></td>
-                <td class="text-end">{{ '{:,.2f}'.format(u.strike_level) if u.strike_level else '-' }} <small class="text-muted">({{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '' }})</small></td>
-                <td class="text-end">{% if u.eki_level %}{{ '{:,.2f}'.format(u.eki_level) }} <small class="text-muted">({{ '{:.0%}'.format(p.eki_pct) }})</small>{% else %}-{% endif %}</td>
+                <td class="text-end text-mono">{{ '{:,.2f}'.format(u.initial_price) if u.initial_price else '-' }}</td>
+                <td class="text-end text-mono">{{ '{:,.2f}'.format(u.ko_level) if u.ko_level else '-' }} <small class="text-muted">({{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '' }})</small></td>
+                <td class="text-end text-mono">{{ '{:,.2f}'.format(u.strike_level) if u.strike_level else '-' }} <small class="text-muted">({{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '' }})</small></td>
+                <td class="text-end text-mono">{% if u.eki_level %}{{ '{:,.2f}'.format(u.eki_level) }} <small class="text-muted">({{ '{:.0%}'.format(p.eki_pct) }})</small>{% else %}-{% endif %}</td>
             </tr>
             {% endfor %}
             </tbody>
         </table>
+        </div>
         {% endif %}
 
-        <div class="d-flex justify-content-between align-items-end">
+        <div class="d-flex justify-content-between align-items-end mt-2">
             <div>
                 {% for pos in p.positions %}
-                <span class="badge bg-light text-dark border me-1" style="font-size:0.85rem;">
-                    {{ pos.client.name_masked }}
-                    ｜{{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}
+                <span class="client-badge" style="background:var(--fcn-gray-bg); color:var(--fcn-text);">
+                    {{ pos.client.name_masked }} | {{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}
                 </span>
                 {% endfor %}
             </div>
-            <div>
-                <a href="/products/{{ p.id }}/edit" class="btn btn-outline-primary btn-sm me-1">修改</a>
-                <form action="/products/{{ p.id }}/reactivate" method="POST" class="d-inline">
-                    <button class="btn btn-outline-success btn-sm"
-                            onclick="return confirm('確認將 {{ p.product_code }} 移回持倉中？')">
-                        移回持倉
-                    </button>
+            <div class="d-flex gap-2">
+                <a href="/products/{{ p.id }}/edit" class="btn btn-outline-primary btn-sm">修改</a>
+                <form action="/products/{{ p.id }}/reactivate" method="POST" class="mb-0" data-confirm="確認將 {{ p.product_code }} 移回持倉中？">
+                    <button type="submit" class="btn btn-outline-success btn-sm">移回持倉</button>
                 </form>
             </div>
         </div>
@@ -77,7 +74,13 @@
 </div>
 {% endfor %}
 {% else %}
-<div class="alert alert-secondary">尚無已出場商品。</div>
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-icon">&#127942;</div>
+        <h6>尚無已出場商品</h6>
+        <p>當商品所有標的達到 KO 價格後，可在總覽頁面移至此處</p>
+    </div>
+</div>
 {% endif %}
 
 {% endblock %}

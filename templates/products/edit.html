@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 {% block content %}
-<h5 class="mb-3">編輯商品 — {{ product.product_code }}</h5>
+<div class="page-header">
+    <h5>編輯商品 — {{ product.product_code }}</h5>
+</div>
 <form method="POST" class="card p-4">
     <div class="row g-3">
         <div class="col-md-3">
@@ -83,7 +85,7 @@
     </div>
 
     <hr>
-    <p class="fw-bold mb-2">連結標的</p>
+    <div class="section-title">連結標的</div>
     <div class="row g-3">
         {% for i in range(4) %}
         {% set u = underlyings[i] if i < underlyings|length else None %}
@@ -116,9 +118,9 @@
         {% endfor %}
     </div>
 
-    <div class="mt-4">
+    <div class="mt-4 d-flex gap-2">
         <button type="submit" class="btn btn-primary">儲存變更</button>
-        <a href="{{ url_for('ko_history') if product.status == 'ko_exited' else url_for('product_detail', pid=product.id) }}" class="btn btn-secondary ms-2">取消</a>
+        <a href="{{ url_for('ko_history') if product.status == 'ko_exited' else url_for('product_detail', pid=product.id) }}" class="btn btn-outline-secondary">取消</a>
     </div>
 </form>
 {% endblock %}

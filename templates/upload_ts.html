@@ -3,29 +3,29 @@
 <div class="row">
     <div class="col-lg-7">
         <div class="card mb-3">
-            <div class="card-header"><h5 class="mb-0">上傳 TS → 產出客戶文件圖片</h5></div>
+            <div class="card-header-fcn">上傳 TS &rarr; 產出客戶文件圖片</div>
             <div class="card-body">
-                <form method="POST" action="{{ url_for('upload_ts') }}" enctype="multipart/form-data">
+                <form method="POST" action="{{ url_for('upload_ts') }}" enctype="multipart/form-data" id="uploadForm">
                     <div class="mb-3">
                         <label class="form-label">上傳最終商品文件 PDF</label>
                         <input type="file" name="ts_file" class="form-control" accept=".pdf" required>
                     </div>
-                    <button type="submit" class="btn btn-primary">解析並產生圖片</button>
+                    <button type="submit" class="btn btn-primary" onclick="FCN.showLoading();">解析並產生圖片</button>
                 </form>
             </div>
         </div>
     </div>
     <div class="col-lg-5">
         <div class="card mb-3">
-            <div class="card-header"><h6 class="mb-0">使用說明</h6></div>
-            <div class="card-body" style="font-size: 0.9rem;">
-                <ol>
-                    <li>收到公司寄來的最終商品文件 PDF</li>
-                    <li>上傳 PDF</li>
-                    <li>系統自動解析，產出簡易版客戶文件圖片</li>
+            <div class="card-header" style="background:var(--fcn-bg); border-bottom:1px solid var(--fcn-border);"><h6 class="mb-0" style="font-weight:600;">使用說明</h6></div>
+            <div class="card-body" style="font-size: 0.88rem;">
+                <ol style="padding-left:1.2rem;">
+                    <li class="mb-1">收到公司寄來的最終商品文件 PDF</li>
+                    <li class="mb-1">上傳 PDF</li>
+                    <li class="mb-1">系統自動解析，產出簡易版客戶文件圖片</li>
                     <li>下載圖片直接傳給客戶</li>
                 </ol>
-                <p class="text-muted mb-0">支援 DBS、SG 等發行商格式</p>
+                <p class="text-muted mb-0" style="font-size:0.82rem;">支援 DBS、SG 等發行商格式</p>
             </div>
         </div>
     </div>

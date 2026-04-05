@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 {% block content %}
-<h5 class="mb-3">新增商品</h5>
+<div class="page-header">
+    <h5>新增商品</h5>
+</div>
 <form method="POST" class="card p-4">
     <div class="row g-3">
         <div class="col-md-3">
@@ -89,7 +91,7 @@
     </div>
 
     <hr>
-    <p class="fw-bold mb-2">連結標的</p>
+    <div class="section-title">連結標的</div>
     <div class="row g-3">
         {% for i in range(1, 5) %}
         <div class="col-md-3">
@@ -135,12 +137,12 @@
     </div>
 
     <hr>
-    <p class="fw-bold mb-2">客戶部位 (第一筆)</p>
+    <div class="section-title">客戶部位 (第一筆)</div>
     <div class="row g-3">
         <div class="col-md-3">
             <label class="form-label">客戶</label>
-            <div class="d-flex">
-                <select name="client_id" id="client_select" class="form-select me-2">
+            <div class="d-flex gap-2">
+                <select name="client_id" id="client_select" class="form-select">
                     <option value="">-- 選擇客戶 --</option>
                     {% for c in clients %}
                     <option value="{{ c.id }}">{{ c.name_masked }}</option>
@@ -164,7 +166,7 @@
         <div class="modal-dialog modal-sm">
             <div class="modal-content">
                 <div class="modal-header py-2">
-                    <h6 class="modal-title">新增客戶</h6>
+                    <h6 class="modal-title" style="font-weight:600;">新增客戶</h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -177,9 +179,9 @@
         </div>
     </div>
 
-    <div class="mt-4">
+    <div class="mt-4 d-flex gap-2">
         <button type="submit" class="btn btn-primary">新增商品</button>
-        <a href="/" class="btn btn-secondary ms-2">取消</a>
+        <a href="/" class="btn btn-outline-secondary">取消</a>
     </div>
 </form>
 {% endblock %}
@@ -188,21 +190,26 @@
 <script>
 document.getElementById('save_new_client').addEventListener('click', async () => {
     const name = document.getElementById('new_client_name').value.trim();
-    if (!name) { alert('請輸入客戶姓名'); return; }
-    const res = await fetch('/api/clients', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name})
-    });
-    const data = await res.json();
-    if (data.id) {
-        const sel = document.getElementById('client_select');
-        const opt = new Option(data.name, data.id, true, true);
-        sel.add(opt);
-        document.getElementById('new_client_name').value = '';
-        bootstrap.Modal.getInstance(document.getElementById('newClientModal')).hide();
-    } else {
-        alert(data.error || '新增失敗');
+    if (!name) { FCN.toast('請輸入客戶姓名', 'warning'); return; }
+    try {
+        const res = await fetch('/api/clients', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name})
+        });
+        const data = await res.json();
+        if (data.id) {
+            const sel = document.getElementById('client_select');
+            const opt = new Option(data.name, data.id, true, true);
+            sel.add(opt);
+            document.getElementById('new_client_name').value = '';
+            bootstrap.Modal.getInstance(document.getElementById('newClientModal')).hide();
+            FCN.toast('客戶新增成功', 'success');
+        } else {
+            FCN.toast(data.error || '新增失敗', 'error');
+        }
+    } catch (e) {
+        FCN.toast('新增失敗，請重試', 'error');
     }
 });
 </script>
