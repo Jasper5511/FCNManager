@@ -1040,9 +1040,16 @@ def _make_single_product_pdf(pos, today, font_path):
     import matplotlib.font_manager as fm
     # 設定中文字型
     _zh_font = None
-    for fp in [r'C:\Windows\Fonts\msjh.ttc', r'C:\Windows\Fonts\msyh.ttc']:
+    _font_candidates = [
+        r'C:\Windows\Fonts\msjh.ttc',
+        r'C:\Windows\Fonts\msyh.ttc',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'NotoSansTC-Static.ttf'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'NotoSansTC-Variable.ttf'),
+    ]
+    for fp in _font_candidates:
         if os.path.exists(fp):
             _zh_font = fm.FontProperties(fname=fp)
+            fm.fontManager.addfont(fp)
             plt.rcParams['font.family'] = _zh_font.get_name()
             break
     if not _zh_font:
@@ -1483,10 +1490,17 @@ def generate_quote():
         import matplotlib.font_manager as fm
 
         # 中文字型
-        for fp in [r'C:\Windows\Fonts\msjh.ttc', r'C:\Windows\Fonts\msyh.ttc']:
+        _font_found = False
+        for fp in [r'C:\Windows\Fonts\msjh.ttc', r'C:\Windows\Fonts\msyh.ttc',
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'NotoSansTC-Static.ttf'),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'NotoSansTC-Variable.ttf')]:
             if os.path.exists(fp):
+                fm.fontManager.addfont(fp)
                 plt.rcParams['font.family'] = fm.FontProperties(fname=fp).get_name()
+                _font_found = True
                 break
+        if not _font_found:
+            plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'Noto Sans TC', 'SimHei']
         plt.rcParams['axes.unicode_minus'] = False
 
         # 報價圖存暫存檔
