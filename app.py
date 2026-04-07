@@ -111,6 +111,12 @@ def _setup_scheduler():
                         db.session.rollback()
                         app.logger.error(f'排程更新 user {user.id} 失敗: {e}')
                 app.logger.info('每日收盤價已自動更新')
+                # 備份資料庫到 Google Drive
+                try:
+                    from gdrive_backup import backup_to_drive
+                    backup_to_drive(app)
+                except Exception as e:
+                    app.logger.error(f'自動備份失敗: {e}')
 
         def _keep_alive():
             """每 10 分鐘 ping 自己，防止 Render 免費方案休眠"""
@@ -703,6 +709,22 @@ def fetch_prices():
 
     threading.Thread(target=_bg_fetch, args=(uid,), daemon=True).start()
     flash('正在背景更新收盤價，約 10 秒後重新整理即可看到最新價格', 'info')
+    return redirect(url_for('dashboard'))
+
+
+# ── 手動備份到 Google Drive ───────────────────────────────────────────────────
+@app.route('/backup_drive')
+@login_required
+def backup_drive():
+    try:
+        from gdrive_backup import backup_to_drive
+        result = backup_to_drive(app)
+        if result:
+            flash('資料庫已成功備份到 Google Drive', 'success')
+        else:
+            flash('備份失敗，請檢查 Google Drive 設定', 'danger')
+    except Exception as e:
+        flash(f'備份失敗: {e}', 'danger')
     return redirect(url_for('dashboard'))
 
 
