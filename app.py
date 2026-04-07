@@ -71,9 +71,11 @@ def _setup_scheduler():
                             continue
                         try:
                             prices, price_date = fetch_quotes(tickers)
-                        except Exception:
+                        except Exception as e:
+                            app.logger.error(f'排程 fetch_quotes user {user.id} 例外: {e}')
                             prices, price_date = {}, None
                         if not prices:
+                            app.logger.warning(f'排程更新 user {user.id}: 所有來源皆失敗，0 檔更新')
                             continue
                         if not price_date:
                             price_date = today - timedelta(days=1)
@@ -656,9 +658,11 @@ def fetch_prices():
             today = date.today()
             try:
                 prices, price_date = fetch_quotes(tickers)
-            except Exception:
+            except Exception as e:
+                app.logger.error(f'手動 fetch_quotes user={uid} 例外: {e}')
                 prices, price_date = {}, None
             if not prices:
+                app.logger.warning(f'手動更新 user={uid}: 所有來源皆失敗，0 檔更新')
                 return
             if not price_date:
                 price_date = today - timedelta(days=1)

@@ -315,13 +315,25 @@ def _q_tradier(tickers, today):
 
 # ── 主函數 ──
 _QUOTE_SOURCES = [
-    _q_yfinance, _q_finnhub, _q_twelvedata, _q_fmp, _q_polygon,
+    _q_finnhub, _q_twelvedata, _q_fmp, _q_polygon,
     _q_tiingo, _q_alphavantage, _q_stooq, _q_eodhd, _q_stockdata,
     _q_nasdaqdatalink, _q_marketstack, _q_yahoo_direct, _q_google, _q_tradier,
+    _q_yfinance,  # yfinance 放最後：雲端 IP 被 Yahoo 封鎖，僅本機可用
 ]
 
 def _get_last_trading_date():
-    """用 yfinance 取得最近一個實際交易日的日期（最可靠）"""
+    """取得最近一個實際交易日的日期"""
+    # 1. Finnhub（雲端可用，透過 quote timestamp 取得最後交易日）
+    key = _env('FINNHUB_API_KEY')
+    if key:
+        try:
+            d = _get(f'https://finnhub.io/api/v1/quote?symbol=AAPL&token={key}')
+            if d and d.get('t') and d['t'] > 0:
+                from datetime import timezone as _tz
+                return datetime.fromtimestamp(d['t'], tz=_tz.utc).date()
+        except Exception:
+            pass
+    # 2. yfinance（本機可用，雲端 IP 被 Yahoo 封鎖）
     try:
         import yfinance as yf
         data = yf.download('^GSPC', period='5d', progress=False, threads=False)
@@ -329,7 +341,7 @@ def _get_last_trading_date():
             return data.index[-1].date()
     except Exception:
         pass
-    # fallback: 往回找最近的非週末日
+    # 3. fallback: 往回找最近的非週末日（不含假日，僅供兜底）
     d = date.today() - timedelta(days=1)
     while d.weekday() >= 5:  # 5=Sat, 6=Sun
         d -= timedelta(days=1)
@@ -349,8 +361,11 @@ def fetch_quotes(tickers):
                 # 統一用實際交易日日期，不信任各來源自己算的日期
                 log.info(f'[quotes] {fn.__name__}: {len(prices)}/{len(tickers)} tickers, date={actual_date}')
                 return prices, actual_date
+            else:
+                log.warning(f'[quotes] {fn.__name__}: 回傳空資料')
         except Exception as e:
-            log.debug(f'[quotes] {fn.__name__}: {e}')
+            log.warning(f'[quotes] {fn.__name__} 失敗: {e}')
+    log.error(f'[quotes] 全部 {len(_QUOTE_SOURCES)} 個來源皆失敗，無法取得 {len(tickers)} 檔股價')
     return {}, None
 
 
@@ -564,9 +579,10 @@ def _h_tradier(ticker, start, end):
 
 # ── 主函數 ──
 _HISTORY_SOURCES = [
-    _h_yfinance, _h_finnhub, _h_twelvedata, _h_fmp, _h_polygon,
+    _h_finnhub, _h_twelvedata, _h_fmp, _h_polygon,
     _h_tiingo, _h_alphavantage, _h_stooq, _h_eodhd,
     _h_nasdaqdatalink, _h_marketstack, _h_yahoo_direct, _h_tradier,
+    _h_yfinance,  # yfinance 放最後：雲端 IP 被 Yahoo 封鎖，僅本機可用
 ]
 
 def fetch_history(ticker, start_date, end_date):
@@ -722,8 +738,9 @@ def _i_eodhd():
 
 # ── 主函數 ──
 _INDICES_SOURCES = [
-    _i_yfinance, _i_twelvedata, _i_fmp, _i_yahoo_direct,
+    _i_twelvedata, _i_fmp, _i_yahoo_direct,
     _i_polygon, _i_stooq, _i_eodhd,
+    _i_yfinance,  # yfinance 放最後：雲端 IP 被 Yahoo 封鎖，僅本機可用
 ]
 
 def fetch_indices():
