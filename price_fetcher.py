@@ -84,8 +84,8 @@ def _q_finnhub(tickers, today):
     prices = {}
     for t in tickers:
         d = _get(f'https://finnhub.io/api/v1/quote?symbol={t}&token={key}')
-        if d and d.get('pc') and d['pc'] > 0:
-            prices[t] = round(d['pc'], 2)
+        if d and d.get('c') and d['c'] > 0:
+            prices[t] = round(d['c'], 2)
         time.sleep(0.15)
     return prices, today - timedelta(days=1) if prices else ({}, None)
 
@@ -97,9 +97,9 @@ def _q_twelvedata(tickers, today):
     prices = {}
     for t in tickers:
         d = _get(f'https://api.twelvedata.com/quote?symbol={t}&apikey={key}')
-        if d and d.get('previous_close'):
+        if d and d.get('close'):
             try:
-                prices[t] = round(float(d['previous_close']), 2)
+                prices[t] = round(float(d['close']), 2)
             except (ValueError, TypeError):
                 pass
         time.sleep(0.5)
@@ -117,9 +117,9 @@ def _q_fmp(tickers, today):
     prices = {}
     for item in d:
         sym = item.get('symbol')
-        pc = item.get('previousClose')
-        if sym and pc:
-            prices[sym] = round(float(pc), 2)
+        price = item.get('price') or item.get('previousClose')
+        if sym and price:
+            prices[sym] = round(float(price), 2)
     return prices, today - timedelta(days=1) if prices else ({}, None)
 
 # ── 5. Polygon.io ──
@@ -146,8 +146,8 @@ def _q_tiingo(tickers, today):
     prices = {}
     for t in tickers:
         d = _get(f'https://api.tiingo.com/iex/{t}', headers=headers)
-        if d and isinstance(d, list) and len(d) and d[0].get('prevClose'):
-            prices[t] = round(float(d[0]['prevClose']), 2)
+        if d and isinstance(d, list) and len(d) and d[0].get('last'):
+            prices[t] = round(float(d[0]['last']), 2)
         time.sleep(0.2)
     return prices, today - timedelta(days=1) if prices else ({}, None)
 
@@ -160,10 +160,10 @@ def _q_alphavantage(tickers, today):
     for t in tickers:
         d = _get(f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={t}&apikey={key}')
         if d and 'Global Quote' in d:
-            pc = d['Global Quote'].get('08. previous close')
-            if pc:
+            price = d['Global Quote'].get('05. price') or d['Global Quote'].get('08. previous close')
+            if price:
                 try:
-                    prices[t] = round(float(pc), 2)
+                    prices[t] = round(float(price), 2)
                 except (ValueError, TypeError):
                     pass
         time.sleep(3)
@@ -193,9 +193,9 @@ def _q_eodhd(tickers, today):
     prices = {}
     for t in tickers:
         d = _get(f'https://eodhd.com/api/real-time/{t}.US?api_token={key}&fmt=json')
-        if d and d.get('previousClose'):
+        if d and (d.get('close') or d.get('previousClose')):
             try:
-                prices[t] = round(float(d['previousClose']), 2)
+                prices[t] = round(float(d.get('close') or d['previousClose']), 2)
             except (ValueError, TypeError):
                 pass
         time.sleep(1)
@@ -213,9 +213,9 @@ def _q_stockdata(tickers, today):
     prices = {}
     for item in d['data']:
         sym = item.get('ticker')
-        pc = item.get('previous_close_price')
-        if sym and pc:
-            prices[sym] = round(float(pc), 2)
+        price = item.get('price') or item.get('previous_close_price')
+        if sym and price:
+            prices[sym] = round(float(price), 2)
     return prices, today - timedelta(days=1) if prices else ({}, None)
 
 # ── 11. Nasdaq Data Link ──
@@ -307,9 +307,9 @@ def _q_tradier(tickers, today):
     prices = {}
     for q in quotes:
         sym = q.get('symbol')
-        pc = q.get('prevclose')
-        if sym and pc:
-            prices[sym] = round(float(pc), 2)
+        price = q.get('last') or q.get('prevclose')
+        if sym and price:
+            prices[sym] = round(float(price), 2)
     return prices, today - timedelta(days=1) if prices else ({}, None)
 
 

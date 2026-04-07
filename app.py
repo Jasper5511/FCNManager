@@ -55,6 +55,8 @@ def _setup_scheduler():
 
         def _scheduled_price_update():
             with app.app_context():
+                # 部署重啟後舊連線可能已斷，先清除再建新連線
+                db.session.remove()
                 from price_fetcher import fetch_quotes
                 from dateutil.relativedelta import relativedelta
                 users = AppUser.query.all()
@@ -547,6 +549,7 @@ def _maybe_bg_update(uid, active):
             _bg_running = True
         try:
             with app.app_context():
+                db.session.remove()
                 from price_fetcher import fetch_quotes
                 from dateutil.relativedelta import relativedelta
                 all_products = Product.query.filter_by(status='active', user_id=uid).all()
@@ -645,6 +648,7 @@ def fetch_prices():
 
     def _bg_fetch(uid):
         with app.app_context():
+            db.session.remove()
             from price_fetcher import fetch_quotes
             from dateutil.relativedelta import relativedelta
             active = Product.query.filter_by(status='active', user_id=uid).all()
@@ -702,8 +706,9 @@ def fetch_prices():
             try:
                 db.session.commit()
                 app.logger.info(f'手動更新完成：user={uid}')
-            except Exception:
+            except Exception as e:
                 db.session.rollback()
+                app.logger.error(f'手動更新 DB commit 失敗 user={uid}: {e}')
 
     threading.Thread(target=_bg_fetch, args=(uid,), daemon=True).start()
     flash('正在背景更新收盤價，約 10 秒後重新整理即可看到最新價格', 'info')
