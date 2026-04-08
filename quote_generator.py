@@ -159,8 +159,8 @@ def generate_quote_image(params):
     if btm_actual != total_w:
         btm_cols[-1] += total_w - btm_actual
 
-    margin = 0
-    img_w = total_w
+    margin = 2
+    img_w = total_w + margin * 2
 
     # ── 上半部：商品參數 ──
     ko_schedule = params.get('ko_schedule')
