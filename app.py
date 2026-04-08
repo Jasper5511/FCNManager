@@ -947,6 +947,7 @@ def products():
 def add_product():
     clients = Client.query.filter_by(user_id=current_uid()).order_by(Client.name).all()
     if request.method == 'POST':
+      try:
         f = request.form
         ko_type = f.get('ko_type', 'fixed')
 
@@ -1031,6 +1032,11 @@ def add_product():
         db.session.commit()
         flash(f'已新增商品：{p.product_code}', 'success')
         return redirect(url_for('dashboard'))
+      except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'新增商品失敗: {e}')
+        flash(f'新增失敗: {e}', 'danger')
+        return redirect(url_for('add_product'))
 
     return render_template('products/add.html', clients=clients)
 
