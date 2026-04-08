@@ -6,3 +6,6 @@ __pycache__/
 .vscode/
 start_background.vbs
 fonts/
+gdrive_credentials.json
+oauth_credentials.json
+gdrive_token.json
