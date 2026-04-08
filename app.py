@@ -54,6 +54,16 @@ with app.app_context():
             conn.execute(text('ALTER TABLE underlyings ADD COLUMN ko_hit_date DATE'))
             conn.commit()
             app.logger.info('已自動新增 underlyings.ko_hit_date 欄位')
+        # PostgreSQL: 修正 ID 序列不同步
+        db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+        if 'postgresql' in db_uri:
+            for tbl in ['products', 'underlyings', 'clients', 'positions', 'app_users']:
+                try:
+                    conn.execute(text(f"SELECT setval('{tbl}_id_seq', COALESCE((SELECT MAX(id) FROM {tbl}), 1))"))
+                    conn.commit()
+                except Exception:
+                    pass
+            app.logger.info('已修正 PostgreSQL ID 序列')
 
 # ── 初始化 LINE Bot ──────────────────────────────────────────────────────────
 from line_bot import init_line, is_configured as line_is_configured
