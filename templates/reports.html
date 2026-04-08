@@ -37,8 +37,8 @@
         <tr>
             <td class="fw-bold">{{ p.product_code }}</td>
             <td>{{ p.issuer or '-' }}</td>
-            <td class="text-end text-mono">USD {{ '{:,.0f}'.format(pos.investment_amount) }}</td>
-            <td class="text-end text-mono">USD {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}</td>
+            <td class="text-end text-mono">{{ p.currency }} {{ '{:,.0f}'.format(pos.investment_amount) if pos.investment_amount else '-' }}</td>
+            <td class="text-end text-mono">{{ p.currency }} {{ '{:,.0f}'.format(pos.monthly_coupon) if pos.monthly_coupon else '-' }}</td>
             <td>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-' }}</td>
             <td class="text-center">
                 <a href="/report/{{ c.id }}/{{ p.id }}" class="btn btn-outline-primary btn-sm">PDF</a>

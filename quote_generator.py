@@ -126,7 +126,8 @@ def generate_quote_image(params):
     BLACK = (0, 0, 0)
     WHITE = (255, 255, 255)
     RED = (255, 0, 0)
-    PINK = (252, 228, 225)             # 淺粉橘（帶點黃的粉紅）
+    is_stepdown = params.get('product_type') == 'Stepdown FCN'
+    PINK = (210, 230, 250) if is_stepdown else (252, 228, 225)  # 步階式用淺藍，一般用淺粉
     YELLOW_BG = (255, 255, 0)
 
     # ── 尺寸 ──
@@ -158,23 +159,31 @@ def generate_quote_image(params):
     if btm_actual != total_w:
         btm_cols[-1] += total_w - btm_actual
 
-    margin = 15
-    img_w = total_w + margin * 2
+    margin = 0
+    img_w = total_w
 
     # ── 上半部：商品參數 ──
-    ko_display = params.get('ko_display', '')
-    if not ko_display:
-        ko_val = params.get('ko_pct', '')
-        if isinstance(ko_val, (int, float)):
-            ko_display = f'{ko_val:.0%}'
-        else:
-            ko_display = str(ko_val)
+    ko_schedule = params.get('ko_schedule')
+    if ko_schedule:
+        # Stepdown: 顯示每月 KO 排程
+        ko_parts = [f'{k:.0%}' for k in ko_schedule]
+        ko_display = '、'.join(ko_parts)
+    else:
+        ko_display = params.get('ko_display', '')
+        if not ko_display:
+            ko_val = params.get('ko_pct', '')
+            if isinstance(ko_val, (int, float)):
+                ko_display = f'{ko_val:.0%}'
+            else:
+                ko_display = str(ko_val)
 
     strike_display = f'{params["strike_pct"]:.2%}' if isinstance(params['strike_pct'], (int, float)) else str(params['strike_pct'])
     coupon_display = f'{params["coupon"]:.2%}' if isinstance(params['coupon'], (int, float)) else str(params['coupon'])
 
     type_display = {
         'FCN': 'FCN(固定配息)',
+        'Stepdown FCN': 'FCN(固定配息)-步階式出場',
+        'DAC': 'DAC(區間配息)',
         'FCN_stepdown': 'FCN(固定配息)-步階式',
         'BEN': 'Regular BEN',
     }.get(params['product_type'], params['product_type'])
@@ -192,12 +201,19 @@ def generate_quote_image(params):
         ('KO',         '出場價',     ko_display),
         ('Coupon',     '年化報酬率', coupon_display),
         ('KO Start',   '閉鎖',       params.get('ko_start', '1M')),
-        ('Memory KO' if params.get('memory_ko') else 'KO', '記憶式' if params.get('memory_ko') else '非記憶式', 'YES'),
+        ('KO period end' if is_stepdown else ('Memory KO' if params.get('memory_ko') else 'KO'),
+         '記憶式',
+         'YES' if (is_stepdown or params.get('memory_ko')) else 'NO'),
         ('Currency',   '幣別',       params.get('currency', 'USD')),
     ]
 
+    # KO 排程行需要加高（超過5個月時換行）
+    ko_row_extra = 0
+    if ko_schedule and len(ko_schedule) > 4:
+        ko_row_extra = row_h  # 多一行高度
+
     # 動態計算圖片高度
-    img_h = margin + len(param_rows) * row_h + row_h + 2 * row_h + len(tickers) * row_h + margin
+    img_h = margin + len(param_rows) * row_h + ko_row_extra + row_h + 2 * row_h + len(tickers) * row_h + margin
     img = Image.new('RGB', (img_w, img_h), WHITE)
     draw = ImageDraw.Draw(img)
 
@@ -205,19 +221,32 @@ def generate_quote_image(params):
     y = margin
 
     for eng, chi, val in param_rows:
+        # KO 行排程文字長，需要加高
+        is_ko_row = (eng == 'KO' and ko_schedule and len(ko_schedule) > 4)
+        cur_h = row_h + ko_row_extra if is_ko_row else row_h
+
         x = x0
-        # 英文標籤（淺粉紅底粗體靠左）
-        draw.rectangle([x, y, x + top_col1, y + row_h], fill=PINK, outline=BLACK)
-        _text_left(draw, x, y, top_col1, row_h, eng, font_bold, BLACK)
+        # 英文標籤
+        draw.rectangle([x, y, x + top_col1, y + cur_h], fill=PINK, outline=BLACK)
+        _text_left(draw, x, y, top_col1, cur_h, eng, font_bold, BLACK)
         x += top_col1
-        # 中文標籤（淺粉紅底靠左）
-        draw.rectangle([x, y, x + top_col2, y + row_h], fill=PINK, outline=BLACK)
-        _text_left(draw, x, y, top_col2, row_h, chi, font, BLACK)
+        # 中文標籤
+        draw.rectangle([x, y, x + top_col2, y + cur_h], fill=PINK, outline=BLACK)
+        _text_left(draw, x, y, top_col2, cur_h, chi, font, BLACK)
         x += top_col2
-        # 值（深粉紅底，數字置中）
-        draw.rectangle([x, y, x + top_col3, y + row_h], fill=WHITE, outline=BLACK)
-        _text_center(draw, x, y, top_col3, row_h, str(val), font_bold, RED)
-        y += row_h
+        # 值
+        draw.rectangle([x, y, x + top_col3, y + cur_h], fill=WHITE, outline=BLACK)
+        if is_ko_row:
+            # 多行顯示 KO 排程
+            parts = str(val).split('、')
+            mid = (len(parts) + 1) // 2
+            line1 = '、'.join(parts[:mid])
+            line2 = '、'.join(parts[mid:])
+            _text_center(draw, x, y, top_col3, cur_h // 2, line1, font_bold, RED)
+            _text_center(draw, x, y + cur_h // 2, top_col3, cur_h // 2, line2, font_bold, RED)
+        else:
+            _text_center(draw, x, y, top_col3, cur_h, str(val), font_bold, RED)
+        y += cur_h
 
     # ── 發行機構列（淺粉紅底紅字，與表格同寬）──
     issuer = params.get('issuer', '')
@@ -269,7 +298,7 @@ def generate_quote_image(params):
         x = x0
         # 標的名稱（黃底靠左）
         w = btm_cols[0]
-        draw.rectangle([x, y, x + w, y + row_h], fill=YELLOW_BG, outline=BLACK)
+        draw.rectangle([x, y, x + w, y + row_h], fill=WHITE, outline=BLACK)
         _text_left(draw, x, y, w, row_h, display, font, BLACK)
         x += w
 

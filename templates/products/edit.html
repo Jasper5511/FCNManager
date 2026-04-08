@@ -56,8 +56,16 @@
     </div>
 
     <div class="row g-3 mt-1">
-        <div class="col-md-2">
-            <label class="form-label">KO% (自動出場)</label>
+        <div class="col-md-3">
+            <label class="form-label">KO 類型</label>
+            <select name="ko_type" id="ko_type" class="form-select">
+                <option value="fixed" {{ 'selected' if product.ko_type == 'fixed' else '' }}>FCN（固定 KO）</option>
+                <option value="stepdown" {{ 'selected' if product.ko_type == 'stepdown' else '' }}>Stepdown FCN（遞減 KO）</option>
+                <option value="dac" {{ 'selected' if product.ko_type == 'dac' else '' }}>DAC（區間配息）</option>
+            </select>
+        </div>
+        <div class="col-md-2" id="fixed_ko_wrap">
+            <label class="form-label">KO%</label>
             <input name="ko_pct" type="number" step="0.01" class="form-control"
                    value="{{ '{:.2f}'.format(product.ko_pct * 100) if product.ko_pct else '' }}">
         </div>
@@ -72,15 +80,36 @@
                    value="{{ '{:.2f}'.format(product.eki_pct * 100) if product.eki_pct else '' }}">
         </div>
         <div class="col-md-3">
-            <label class="form-label">KO 類型</label>
-            <select name="ko_type" class="form-select">
-                <option value="fixed" {{ 'selected' if product.ko_type == 'fixed' else '' }}>Fixed</option>
-                <option value="stepdown" {{ 'selected' if product.ko_type == 'stepdown' else '' }}>Stepdown</option>
-            </select>
-        </div>
-        <div class="col-md-3">
             <label class="form-label">備注</label>
             <input name="special_notes" class="form-control" value="{{ product.special_notes or '' }}">
+        </div>
+    </div>
+
+    <!-- Stepdown FCN 專用欄位 -->
+    <div id="stepdown_section" class="row g-3 mt-1" style="display:none;">
+        <div class="col-md-2">
+            <label class="form-label">起始 KO%</label>
+            <input name="ko_start_pct" id="ko_start_pct" type="number" step="0.01" class="form-control"
+                   value="{{ '{:.2f}'.format(product.ko_start_pct * 100) if product.ko_start_pct else '' }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">每月遞減%</label>
+            <input name="ko_stepdown_pct" id="ko_stepdown_pct" type="number" step="0.01" class="form-control"
+                   value="{{ '{:.2f}'.format(product.ko_stepdown_pct * 100) if product.ko_stepdown_pct else '' }}">
+        </div>
+        <div class="col-12 mt-2">
+            <strong style="font-size:0.9rem;">每月比價日（請逐月填入實際日期）</strong>
+            <div id="obs_dates_container" class="row g-2">
+                {% if product.observation_dates %}
+                    {% for d in product.observation_dates|from_json %}
+                    <div class="col-md-2">
+                        <label class="form-label" style="font-size:0.8rem;">第 {{ loop.index }} 月</label>
+                        <input name="obs_date_{{ loop.index0 }}" type="date" class="form-control form-control-sm obs-date-input" value="{{ d }}">
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            <div id="obs_preview" class="mt-2" style="font-size:0.82rem; color:var(--fcn-text-muted);"></div>
         </div>
     </div>
 
@@ -106,8 +135,13 @@
                     <option value="{{ t }}" {{ 'selected' if u and u.ticker == t else '' }}>{{ t }} - {{ n }}</option>
                     {% endfor %}
                 </optgroup>
-                <optgroup label="金融/醫療/其他">
-                    {% for t, n in [('UNH','聯合健康'),('JPM','摩根大通'),('GS','高盛'),('BA','波音'),('AAL','美國航空'),('AA','美國鋁業'),('NKE','Nike'),('COIN','Coinbase')] %}
+                <optgroup label="能源/航空/其他">
+                    {% for t, n in [('VST','維斯達公司'),('UAL','聯合航空'),('PLTR','帕蘭提爾'),('CRWV','CrowdStrike'),('NEM','紐蒙特礦業'),('BMNR','Beamr Imaging'),('BA','波音'),('AAL','美國航空'),('AA','美國鋁業'),('NKE','Nike')] %}
+                    <option value="{{ t }}" {{ 'selected' if u and u.ticker == t else '' }}>{{ t }} - {{ n }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="金融/醫療">
+                    {% for t, n in [('UNH','聯合健康'),('JPM','摩根大通'),('GS','高盛'),('COIN','Coinbase')] %}
                     <option value="{{ t }}" {{ 'selected' if u and u.ticker == t else '' }}>{{ t }} - {{ n }}</option>
                     {% endfor %}
                 </optgroup>
@@ -123,4 +157,78 @@
         <a href="{{ url_for('ko_history') if product.status == 'ko_exited' else url_for('product_detail', pid=product.id) }}" class="btn btn-outline-secondary">取消</a>
     </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Stepdown FCN 動態切換 ──
+const koType = document.getElementById('ko_type');
+const fixedWrap = document.getElementById('fixed_ko_wrap');
+const stepdownSection = document.getElementById('stepdown_section');
+const obsContainer = document.getElementById('obs_dates_container');
+const obsPreview = document.getElementById('obs_preview');
+const tenorInput = document.querySelector('[name=tenor_months]');
+
+function toggleStepdown() {
+    const isStepdown = koType.value === 'stepdown';
+    fixedWrap.style.display = isStepdown ? 'none' : '';
+    stepdownSection.style.display = isStepdown ? '' : 'none';
+    if (isStepdown) {
+        // 如果已有比價日欄位（從 DB 帶入），不重新產生
+        if (obsContainer.querySelectorAll('.obs-date-input').length === 0) {
+            generateObsFields();
+        }
+        updatePreview();
+    }
+}
+koType.addEventListener('change', toggleStepdown);
+toggleStepdown();  // 頁面載入時就判斷
+
+// Tenor 變動時重新產生
+tenorInput.addEventListener('change', () => {
+    if (koType.value === 'stepdown') generateObsFields();
+});
+
+// 根據 Tenor 產生空白日期欄位
+function generateObsFields() {
+    const tenor = parseInt(tenorInput.value);
+    if (!tenor) { obsContainer.innerHTML = ''; obsPreview.innerHTML = ''; return; }
+    const existing = {};
+    document.querySelectorAll('.obs-date-input').forEach(el => {
+        const idx = el.name.replace('obs_date_', '');
+        if (el.value) existing[idx] = el.value;
+    });
+    obsContainer.innerHTML = '';
+    for (let i = 0; i < tenor; i++) {
+        const div = document.createElement('div');
+        div.className = 'col-md-2';
+        const val = existing[i] || '';
+        div.innerHTML = `<label class="form-label" style="font-size:0.8rem;">第 ${i+1} 月</label>
+            <input name="obs_date_${i}" type="date" class="form-control form-control-sm obs-date-input" value="${val}">`;
+        obsContainer.appendChild(div);
+    }
+    document.querySelectorAll('.obs-date-input').forEach(el => el.addEventListener('change', updatePreview));
+    updatePreview();
+}
+
+// 即時預覽 KO 排程
+function updatePreview() {
+    const startKo = parseFloat(document.getElementById('ko_start_pct').value);
+    const stepdown = parseFloat(document.getElementById('ko_stepdown_pct').value);
+    const dates = document.querySelectorAll('.obs-date-input');
+    if (!startKo || !stepdown || dates.length === 0) { obsPreview.innerHTML = ''; return; }
+    let html = '<table class="table table-sm table-bordered" style="font-size:0.8rem; max-width:400px;"><thead><tr><th>月</th><th>比價日</th><th>KO%</th></tr></thead><tbody>';
+    dates.forEach((el, i) => {
+        const ko = startKo - stepdown * (i + 1);
+        const dateVal = el.value ? el.value.substring(5).replace('-', '/') : '未填';
+        html += `<tr><td>${i+1}</td><td>${dateVal}</td><td>${ko.toFixed(0)}%</td></tr>`;
+    });
+    html += '</tbody></table>';
+    obsPreview.innerHTML = html;
+}
+document.getElementById('ko_start_pct').addEventListener('input', updatePreview);
+document.getElementById('ko_stepdown_pct').addEventListener('input', updatePreview);
+document.querySelectorAll('.obs-date-input').forEach(el => el.addEventListener('change', updatePreview));
+updatePreview();
+</script>
 {% endblock %}

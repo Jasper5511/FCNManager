@@ -17,6 +17,14 @@ if hasattr(config[os.environ.get('FLASK_ENV', 'default')], 'init_app'):
     config[os.environ.get('FLASK_ENV', 'default')].init_app(app)
 db.init_app(app)
 
+import json as _json
+@app.template_filter('from_json')
+def from_json_filter(s):
+    try:
+        return _json.loads(s) if s else []
+    except Exception:
+        return []
+
 @app.teardown_appcontext
 def cleanup_session(exception=None):
     if exception:
@@ -27,11 +35,25 @@ with app.app_context():
     # 自動遷移：補上新欄位
     from sqlalchemy import text, inspect
     with db.engine.connect() as conn:
-        cols = [c['name'] for c in inspect(db.engine).get_columns('products')]
-        if 'ko_lockout' not in cols:
-            conn.execute(text('ALTER TABLE products ADD COLUMN ko_lockout INTEGER DEFAULT 1'))
+        insp = inspect(db.engine)
+        # Products 表新增欄位
+        prod_cols = [c['name'] for c in insp.get_columns('products')]
+        for col_name, col_def in [
+            ('ko_lockout', 'INTEGER DEFAULT 1'),
+            ('ko_start_pct', 'FLOAT'),
+            ('ko_stepdown_pct', 'FLOAT'),
+            ('observation_dates', 'TEXT'),
+        ]:
+            if col_name not in prod_cols:
+                conn.execute(text(f'ALTER TABLE products ADD COLUMN {col_name} {col_def}'))
+                conn.commit()
+                app.logger.info(f'已自動新增 products.{col_name} 欄位')
+        # Underlyings 表新增欄位
+        ul_cols = [c['name'] for c in insp.get_columns('underlyings')]
+        if 'ko_hit_date' not in ul_cols:
+            conn.execute(text('ALTER TABLE underlyings ADD COLUMN ko_hit_date DATE'))
             conn.commit()
-            app.logger.info('已自動新增 ko_lockout 欄位')
+            app.logger.info('已自動新增 underlyings.ko_hit_date 欄位')
 
 # ── 初始化 LINE Bot ──────────────────────────────────────────────────────────
 from line_bot import init_line, is_configured as line_is_configured
@@ -89,7 +111,25 @@ def _setup_scheduler():
                                     if u.ticker in prices:
                                         u.latest_price = prices[u.ticker]
                                         u.price_date = price_date
-                                    if u.ko_level and not u.ko_hit and p.start_date:
+                                    # ── Stepdown FCN: 比價日自動判定 ──
+                                    if p.ko_type == 'stepdown' and not u.ko_hit and p.observation_dates and p.ko_start_pct and p.ko_stepdown_pct:
+                                        obs_list = _json.loads(p.observation_dates) if isinstance(p.observation_dates, str) else []
+                                        for idx, obs_str in enumerate(obs_list):
+                                            try:
+                                                obs_d = datetime.strptime(obs_str, '%Y-%m-%d').date()
+                                            except Exception:
+                                                continue
+                                            if obs_d != price_date:
+                                                continue
+                                            ko_pct_m = p.ko_start_pct - p.ko_stepdown_pct * (idx + 1)
+                                            ko_price_m = u.initial_price * ko_pct_m if u.initial_price else None
+                                            if ko_price_m and u.latest_price and u.latest_price >= ko_price_m:
+                                                u.ko_hit = True
+                                                u.ko_hit_date = obs_d
+                                                app.logger.info(f'[排程] Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1}')
+                                            break
+                                    # ── 一般 FCN ──
+                                    elif p.ko_type != 'stepdown' and u.ko_level and not u.ko_hit and p.start_date:
                                         from price_fetcher import _HISTORY_SOURCES
                                         lockout = p.ko_lockout or 1
                                         ko_start = p.start_date + relativedelta(months=lockout)
@@ -110,6 +150,13 @@ def _setup_scheduler():
                                                 u.ko_hit = True
                                 except Exception:
                                     db.session.rollback()
+                        # Stepdown: 檢查全部標的都鎖定 → 自動出場
+                        for p in active:
+                            if p.ko_type == 'stepdown' and p.status == 'active':
+                                uls = [u for u in p.underlyings if u.initial_price]
+                                if uls and all(u.ko_hit for u in uls):
+                                    p.status = 'ko_exited'
+                                    app.logger.info(f'[排程] Stepdown 全部鎖定，自動出場: {p.product_code}')
                         db.session.commit()
                     except Exception as e:
                         db.session.rollback()
@@ -247,9 +294,10 @@ TICKER_NAME = {
     'NFLX': '網飛', 'UBER': '優步', 'UNH': '聯合健康', 'JPM': '摩根大通',
     'GS': '高盛', 'BA': '波音', 'AAL': '美國航空', 'AA': '美國鋁業',
     'NKE': '耐吉', 'COIN': '幣安所', 'SMCI': '超微電腦', 'ASML': '艾司摩爾',
-    'VST': '美國電力', 'F': '福特', 'DIS': '迪士尼', 'PYPL': '貝寶',
+    'VST': '維斯達公司', 'F': '福特', 'DIS': '迪士尼', 'PYPL': '貝寶',
     'CCL': '嘉年華', 'X': '美國鋼鐵', 'SOFI': '索飛', 'PLTR': '帕蘭提爾',
-    'MSTR': '微策略',
+    'MSTR': '微策略', 'UAL': '聯合航空', 'CRWV': 'CrowdStrike',
+    'NEM': '紐蒙特礦業', 'BMNR': 'Beamr Imaging',
 }
 
 @app.context_processor
@@ -420,7 +468,27 @@ def export_excel():
                     for col in range(1, 21):
                         ws.cell(row=r, column=col).fill = bg
 
+            # ── Stepdown: 解析比價日 ──
+            obs_dates = []
+            if p.ko_type == 'stepdown' and p.observation_dates:
+                import json as _j
+                try:
+                    obs_dates = _j.loads(p.observation_dates)
+                except Exception:
+                    pass
+
             # ── Row 1: 標的 ──
+            # E 欄: stepdown 或幣別
+            if p.ko_type == 'stepdown' and p.ko_stepdown_pct:
+                sd_label = f'stepdown {p.ko_stepdown_pct:.0%}'
+                if p.currency and p.currency != 'USD':
+                    ws.cell(row=row, column=5, value=p.currency).font = normal_font
+                    ws.cell(row=row+1, column=5, value=sd_label).font = normal_font
+                else:
+                    ws.cell(row=row, column=5, value=sd_label).font = normal_font
+            elif p.currency and p.currency != 'USD':
+                ws.cell(row=row, column=5, value=p.currency).font = normal_font
+
             c = ws.cell(row=row, column=6, value='標的')
             c.border = thin; c.font = label_font; c.fill = label_fill
             for i, u in enumerate(uls[:4]):
@@ -430,6 +498,13 @@ def export_excel():
                 ws.cell(row=row, column=20, value=clients[0]).border = thin
 
             # ── Row 2: 期初價格 ──
+            # E 欄: 比價日（前半）
+            if obs_dates:
+                half = len(obs_dates) // 2
+                dates_1 = '、'.join(d[5:].replace('-', '/') for d in obs_dates[:half])
+                dates_2 = '、'.join(d[5:].replace('-', '/') for d in obs_dates[half:])
+                ws.cell(row=row+1, column=5, value=dates_1).font = normal_font
+
             c = ws.cell(row=row+1, column=6, value='期初價格')
             c.border = thin; c.font = label_font; c.fill = label_fill
             for i, u in enumerate(uls[:4]):
@@ -439,6 +514,10 @@ def export_excel():
                 ws.cell(row=row+1, column=20, value=clients[1]).border = thin
 
             # ── Row 3: KO（主資料行）──
+            # E 欄: 比價日（後半）
+            if obs_dates:
+                ws.cell(row=row+2, column=5, value=dates_2).font = normal_font
+
             c = ws.cell(row=row+2, column=2, value=p.product_code)
             c.border = thin; c.font = bold_font
             c = ws.cell(row=row+2, column=3, value=p.product_type or 'FCN')
@@ -447,7 +526,12 @@ def export_excel():
             c.border = thin; c.font = normal_font
             c = ws.cell(row=row+2, column=6, value='KO')
             c.border = thin; c.font = label_font; c.fill = label_fill
-            c = ws.cell(row=row+2, column=7, value=p.ko_pct)
+            # Stepdown: KO 欄位用公式格式顯示
+            if p.ko_type == 'stepdown' and p.ko_start_pct and p.ko_stepdown_pct:
+                ko_display = p.ko_pct
+                c = ws.cell(row=row+2, column=7, value=ko_display)
+            else:
+                c = ws.cell(row=row+2, column=7, value=p.ko_pct)
             c.border = thin; c.number_format = pct_fmt; c.font = pct_font; c.fill = label_fill
             for i, u in enumerate(uls[:4]):
                 c = ws.cell(row=row+2, column=8 + i*2, value='V' if u.ko_hit else '')
@@ -628,7 +712,42 @@ def dashboard():
     # 檢查價格是否過期，過期就背景靜默更新（不阻塞頁面載入）
     _maybe_bg_update(current_uid(), active)
 
-    return render_template('dashboard.html', active=active, today=date.today())
+    # 為 Stepdown FCN 預算月度排程
+    stepdown_schedules = {}
+    for p in active:
+        if p.ko_type == 'stepdown' and p.observation_dates and p.ko_start_pct and p.ko_stepdown_pct:
+            obs = _json.loads(p.observation_dates) if isinstance(p.observation_dates, str) else []
+            schedule = []
+            for i, obs_date_str in enumerate(obs):
+                ko_pct_month = p.ko_start_pct - p.ko_stepdown_pct * (i + 1)
+                try:
+                    obs_date = datetime.strptime(obs_date_str, '%Y-%m-%d').date()
+                except Exception:
+                    obs_date = None
+                # 每檔標的在這個月的狀態
+                ul_status = {}
+                for u in p.underlyings:
+                    if u.ko_hit and u.ko_hit_date and obs_date and u.ko_hit_date <= obs_date:
+                        ul_status[u.id] = 'locked'  # 已鎖定（之前月份通過）
+                    elif u.ko_hit and u.ko_hit_date and obs_date and u.ko_hit_date == obs_date:
+                        ul_status[u.id] = 'hit'     # 本月通過
+                    elif obs_date and obs_date < date.today():
+                        ul_status[u.id] = 'miss'    # 已過未通過
+                    elif obs_date and obs_date == date.today():
+                        ul_status[u.id] = 'today'   # 今天比價
+                    else:
+                        ul_status[u.id] = 'pending'  # 未到
+                schedule.append({
+                    'month': i + 1,
+                    'date': obs_date,
+                    'date_str': obs_date_str[5:].replace('-', '/') if obs_date_str else '-',
+                    'ko_pct': ko_pct_month,
+                    'ul_status': ul_status,
+                })
+            stepdown_schedules[p.id] = schedule
+
+    return render_template('dashboard.html', active=active, today=date.today(),
+                           stepdown_schedules=stepdown_schedules)
 
 
 # ── 已出場(KO)頁面 ───────────────────────────────────────────────────────────
@@ -682,7 +801,27 @@ def fetch_prices():
                             existing = PriceHistory.query.filter_by(underlying_id=u.id, price_date=price_date).first()
                             if not existing:
                                 db.session.add(PriceHistory(underlying_id=u.id, price_date=price_date, closing_price=prices[u.ticker]))
-                        if u.ko_level and not u.ko_hit and p.start_date:
+                        # ── Stepdown FCN: 比價日自動判定 ──
+                        if p.ko_type == 'stepdown' and not u.ko_hit and p.observation_dates and p.ko_start_pct and p.ko_stepdown_pct:
+                            obs_list = _json.loads(p.observation_dates) if isinstance(p.observation_dates, str) else []
+                            for idx, obs_str in enumerate(obs_list):
+                                try:
+                                    obs_date = datetime.strptime(obs_str, '%Y-%m-%d').date()
+                                except Exception:
+                                    continue
+                                if obs_date != price_date:
+                                    continue
+                                # 今天是比價日，計算該月 KO 價格
+                                ko_pct_month = p.ko_start_pct - p.ko_stepdown_pct * (idx + 1)
+                                ko_price_month = u.initial_price * ko_pct_month if u.initial_price else None
+                                if ko_price_month and u.latest_price and u.latest_price >= ko_price_month:
+                                    u.ko_hit = True
+                                    u.ko_hit_date = obs_date
+                                    app.logger.info(f'Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1} ({obs_str}) 收盤{u.latest_price:.2f} >= KO{ko_price_month:.2f}')
+                                break  # 一天只會匹配一個比價日
+
+                        # ── 一般 FCN: 歷史價格判定 ──
+                        elif p.ko_type != 'stepdown' and u.ko_level and not u.ko_hit and p.start_date:
                             from price_fetcher import _HISTORY_SOURCES
                             lockout = p.ko_lockout or 1
                             ko_start = p.start_date + relativedelta(months=lockout)
@@ -703,6 +842,13 @@ def fetch_prices():
                                     u.ko_hit = True
                     except Exception:
                         db.session.rollback()
+            # Stepdown: 全部標的鎖定 → 自動出場
+            for p in active:
+                if p.ko_type == 'stepdown' and p.status == 'active':
+                    uls = [u for u in p.underlyings if u.initial_price]
+                    if uls and all(u.ko_hit for u in uls):
+                        p.status = 'ko_exited'
+                        app.logger.info(f'Stepdown 全部鎖定，自動出場: {p.product_code}')
             try:
                 db.session.commit()
                 app.logger.info(f'手動更新完成：user={uid}')
@@ -763,10 +909,15 @@ def products():
     active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
     ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at.desc()).all()
     matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at.desc()).all()
-    # 計算持倉總金額
-    total_amount = sum(pos.investment_amount or 0 for p in active for pos in p.positions)
+    # 計算持倉總金額（分幣別）
+    from collections import defaultdict
+    totals_by_currency = defaultdict(float)
+    for p in active:
+        for pos in p.positions:
+            if pos.investment_amount:
+                totals_by_currency[p.currency or 'USD'] += pos.investment_amount
     return render_template('products/index.html', active=active, ko_done=ko_done,
-                           matured=matured, total_amount=total_amount, today=date.today())
+                           matured=matured, totals_by_currency=dict(totals_by_currency), today=date.today())
 
 
 @app.route('/products/add', methods=['GET', 'POST'])
@@ -775,6 +926,32 @@ def add_product():
     clients = Client.query.filter_by(user_id=current_uid()).order_by(Client.name).all()
     if request.method == 'POST':
         f = request.form
+        ko_type = f.get('ko_type', 'fixed')
+
+        # Stepdown FCN: 解析比價日 + 計算 ko_pct（第一個月的 KO）
+        ko_start_pct = None
+        ko_stepdown_pct = None
+        obs_dates_json = None
+        ko_pct_val = None
+
+        if ko_type == 'stepdown':
+            ko_start_pct = float(f['ko_start_pct']) / 100 if f.get('ko_start_pct') else None
+            ko_stepdown_pct = float(f['ko_stepdown_pct']) / 100 if f.get('ko_stepdown_pct') else None
+            # 收集比價日
+            obs_dates = []
+            tenor = int(f['tenor_months']) if f.get('tenor_months') else 0
+            for i in range(tenor):
+                d = f.get(f'obs_date_{i}')
+                if d:
+                    obs_dates.append(d)
+            if obs_dates:
+                obs_dates_json = _json.dumps(obs_dates)
+            # ko_pct 存第一個月的 KO（用於標的 KO 價格計算基準）
+            if ko_start_pct and ko_stepdown_pct:
+                ko_pct_val = ko_start_pct - ko_stepdown_pct
+        else:
+            ko_pct_val = float(f['ko_pct']) / 100 if f.get('ko_pct') else None
+
         # 建立商品
         p = Product(
             user_id       = current_uid(),
@@ -786,10 +963,13 @@ def add_product():
             trade_date    = _parse_date(f.get('trade_date')),
             start_date    = _parse_date(f.get('start_date')),
             maturity_date = _parse_date(f.get('maturity_date')),
-            ko_pct        = float(f['ko_pct']) / 100 if f.get('ko_pct') else None,
+            ko_pct        = ko_pct_val,
             strike_pct    = float(f['strike_pct']) / 100 if f.get('strike_pct') else None,
             eki_pct       = float(f['eki_pct']) / 100 if f.get('eki_pct') else None,
-            ko_type       = f.get('ko_type', 'fixed'),
+            ko_type       = ko_type,
+            ko_start_pct  = ko_start_pct,
+            ko_stepdown_pct = ko_stepdown_pct,
+            observation_dates = obs_dates_json,
             special_notes = f.get('special_notes', '').strip(),
             status        = 'active',
         )
@@ -884,11 +1064,30 @@ def edit_product(pid):
         p.trade_date    = _parse_date(f.get('trade_date'))
         p.start_date    = _parse_date(f.get('start_date'))
         p.maturity_date = _parse_date(f.get('maturity_date'))
-        p.ko_pct        = float(f['ko_pct']) / 100 if f.get('ko_pct') else None
+        p.ko_type       = f.get('ko_type', 'fixed')
         p.strike_pct    = float(f['strike_pct']) / 100 if f.get('strike_pct') else None
         p.eki_pct       = float(f['eki_pct']) / 100 if f.get('eki_pct') else None
-        p.ko_type       = f.get('ko_type', 'fixed')
         p.special_notes = f.get('special_notes', '').strip()
+
+        if p.ko_type == 'stepdown':
+            p.ko_start_pct = float(f['ko_start_pct']) / 100 if f.get('ko_start_pct') else None
+            p.ko_stepdown_pct = float(f['ko_stepdown_pct']) / 100 if f.get('ko_stepdown_pct') else None
+            # 收集比價日
+            obs_dates = []
+            tenor = int(f['tenor_months']) if f.get('tenor_months') else 0
+            for i in range(tenor):
+                d = f.get(f'obs_date_{i}')
+                if d:
+                    obs_dates.append(d)
+            p.observation_dates = _json.dumps(obs_dates) if obs_dates else None
+            # ko_pct 存第一個月 KO
+            if p.ko_start_pct and p.ko_stepdown_pct:
+                p.ko_pct = p.ko_start_pct - p.ko_stepdown_pct
+        else:
+            p.ko_pct = float(f['ko_pct']) / 100 if f.get('ko_pct') else None
+            p.ko_start_pct = None
+            p.ko_stepdown_pct = None
+            p.observation_dates = None
 
         # 更新標的
         existing = {u.id: u for u in p.underlyings}
@@ -1097,7 +1296,10 @@ def _make_single_product_pdf(pos, today, font_path):
     # 摘要
     pdf.set_font('chinese', '', 13)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(0, 10, f'投資金額：USD {pos.investment_amount:,.0f}    每月配息：USD {pos.monthly_coupon:,.0f}',
+    _cur = p.currency or 'USD'
+    _amt = f'{pos.investment_amount:,.0f}' if pos.investment_amount else '-'
+    _coupon = f'{pos.monthly_coupon:,.0f}' if pos.monthly_coupon else '-'
+    pdf.cell(0, 10, f'投資金額：{_cur} {_amt}    每月配息：{_cur} {_coupon}',
              align='C', fill=True, new_x='LMARGIN', new_y='NEXT')
     pdf.ln(5)
 
@@ -1198,7 +1400,10 @@ def _make_single_product_pdf(pos, today, font_path):
     trade_date_str = p.trade_date.strftime('%Y/%m/%d') if p.trade_date else '-'
     start_date_str = p.start_date.strftime('%Y/%m/%d') if p.start_date else '-'
     maturity_date_str = p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date else '-'
-    pdf.cell(0, 7, f'投資金額：USD {pos.investment_amount:,.0f}    月配息：USD {pos.monthly_coupon:,.0f}    交易日：{trade_date_str}    比價日：{start_date_str}    到期日：{maturity_date_str}    剩餘：{days_str}',
+    _cur2 = p.currency or 'USD'
+    _amt2 = f'{pos.investment_amount:,.0f}' if pos.investment_amount else '-'
+    _coupon2 = f'{pos.monthly_coupon:,.0f}' if pos.monthly_coupon else '-'
+    pdf.cell(0, 7, f'投資金額：{_cur2} {_amt2}    月配息：{_cur2} {_coupon2}    交易日：{trade_date_str}    比價日：{start_date_str}    到期日：{maturity_date_str}    剩餘：{days_str}',
              new_x='LMARGIN', new_y='NEXT')
 
     # 標的表格
@@ -1256,7 +1461,9 @@ def _make_single_product_pdf(pos, today, font_path):
     for u in uls:
         if not u.ticker:
             continue
-        chart_path = make_chart(u.ticker, p.product_code, u.ko_level, u.strike_level, u.eki_level, p.strike_pct, p.eki_pct, TICKER_NAME.get(u.ticker, ''))
+        # Stepdown FCN 用期初價格畫「期初價格」線，一般 FCN 用 ko_level
+        chart_ko = u.initial_price if p.ko_type == 'stepdown' and u.initial_price else u.ko_level
+        chart_path = make_chart(u.ticker, p.product_code, chart_ko, u.strike_level, u.eki_level, p.strike_pct, p.eki_pct, TICKER_NAME.get(u.ticker, ''))
         if chart_path:
             chart_files.append(chart_path)
             chart_paths.append(chart_path)
@@ -1475,7 +1682,16 @@ def generate_quote():
         'currency': request.form.get('currency', 'USD'),
         'issuer': request.form.get('issuer', ''),
         'tickers': tickers,
+        'ko_start_pct_q': parse_pct(request.form.get('ko_start_pct_q')),
+        'ko_stepdown_q': parse_pct(request.form.get('ko_stepdown_q')),
     }
+    # Stepdown FCN: 用起始KO算 ko_pct 和排程
+    if params['product_type'] == 'Stepdown FCN' and params['ko_start_pct_q'] and params['ko_stepdown_q']:
+        tenor_n = int(params['tenor'].replace('M', ''))
+        start_ko = params['ko_start_pct_q']
+        step = params['ko_stepdown_q']
+        params['ko_schedule'] = [start_ko - step * i for i in range(tenor_n)]
+        params['ko_pct'] = params['ko_schedule'][0]  # 第一個月的 KO 當提前出場價
 
     if not params['strike_pct'] or not params['coupon']:
         flash('Strike 和 Coupon 為必填', 'danger')

@@ -28,6 +28,13 @@
             </span>
             {% endfor %}
             <a href="/products/{{ p.id }}" class="product-code">{{ p.product_code }}</a>
+            {% if p.ko_type == 'stepdown' %}
+                <span class="badge bg-warning text-dark" style="font-size:0.7rem;">Stepdown FCN</span>
+            {% elif p.ko_type == 'dac' %}
+                <span class="badge bg-info text-dark" style="font-size:0.7rem;">DAC</span>
+            {% else %}
+                <span class="badge bg-secondary" style="font-size:0.7rem;">FCN</span>
+            {% endif %}
             <span class="product-meta">{{ p.issuer or '' }}&nbsp;&nbsp;&nbsp;{{ p.tenor_months }}M&nbsp;&nbsp;&nbsp;{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '' }}</span>
         </div>
         <div class="d-flex align-items-center gap-2">
@@ -44,13 +51,56 @@
     </div>
     <div class="card-body">
         <div class="product-params">
-            <div><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}{% if p.ko_type == 'stepdown' %} <span class="text-warning">(Stepdown)</span>{% endif %}</div>
+            <div><strong>KO：</strong>{{ '{:.0%}'.format(p.ko_pct) if p.ko_pct else '-' }}{% if p.ko_type == 'stepdown' %} <span class="text-warning">(Stepdown{% if p.ko_start_pct %} 起始{{ '{:.0%}'.format(p.ko_start_pct) }}{% endif %}{% if p.ko_stepdown_pct %} 每月降{{ '{:.0%}'.format(p.ko_stepdown_pct) }}{% endif %})</span>{% endif %}</div>
             <div><strong>Strike：</strong>{{ '{:.2%}'.format(p.strike_pct) if p.strike_pct else '-' }}</div>
             <div><strong>EKI：</strong>{{ '{:.0%}'.format(p.eki_pct) if p.eki_pct else '無' }}</div>
             <div><strong>交易日：</strong>{{ p.trade_date.strftime('%Y/%m/%d') if p.trade_date and p.trade_date is not string else (p.trade_date or '-') }}</div>
             <div><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date and p.start_date is not string else (p.start_date or '-') }}</div>
             <div><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date and p.maturity_date is not string else (p.maturity_date or '-') }}</div>
         </div>
+        {% if p.ko_type == 'stepdown' and stepdown_schedules.get(p.id) %}
+        <div class="mb-3">
+            <div class="table-scroll">
+            <table class="table table-sm table-bordered" style="font-size:0.8rem; margin-bottom:0;">
+                <thead>
+                    <tr style="background:var(--fcn-table-header);">
+                        <th style="width:40px;">月</th>
+                        <th style="width:70px;">比價日</th>
+                        <th style="width:55px;">KO%</th>
+                        {% for u in p.underlyings|sort(attribute='position_order') %}
+                        <th class="text-center">{{ u.ticker }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                {% for s in stepdown_schedules[p.id] %}
+                    <tr{% if s.date and s.date == today %} style="background:#fff3cd;"{% endif %}>
+                        <td>{{ s.month }}</td>
+                        <td>{{ s.date_str }}</td>
+                        <td>{{ '{:.0%}'.format(s.ko_pct) }}</td>
+                        {% for u in p.underlyings|sort(attribute='position_order') %}
+                        <td class="text-center">
+                            {% set st = s.ul_status.get(u.id, 'pending') %}
+                            {% if st == 'locked' %}
+                                <span style="color:#999;">--</span>
+                            {% elif st == 'hit' %}
+                                <span class="badge bg-success" style="font-size:0.7rem;">V</span>
+                            {% elif st == 'miss' %}
+                                <span style="color:#dc3545;">X</span>
+                            {% elif st == 'today' %}
+                                <span class="badge bg-warning text-dark" style="font-size:0.7rem;">今日</span>
+                            {% else %}
+                                <span style="color:#ccc;">-</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+        {% endif %}
         {% if p.special_notes %}
         <div class="mb-2" style="font-size:0.82rem; color:var(--fcn-text-muted);">{{ p.special_notes }}</div>
         {% endif %}
@@ -89,7 +139,11 @@
                         {% if u.eki_level and u.latest_price <= u.eki_level %}
                             <span class="badge bg-danger">觸及生效價!</span>
                         {% elif u.strike_level and u.latest_price <= u.strike_level %}
-                            <span class="badge bg-warning text-dark">觸碰執行價!</span>
+                            {% if p.ko_type == 'dac' %}
+                                <span class="badge bg-danger">已觸碰執行價!(不配息)</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark">觸碰執行價!</span>
+                            {% endif %}
                         {% endif %}
                     {% endif %}
                 </td>

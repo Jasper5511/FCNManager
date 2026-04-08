@@ -58,6 +58,9 @@ class Product(db.Model):
     eki_pct        = db.Column(db.Float)                         # None = 無EKI
     ko_type        = db.Column(db.String(20), default='fixed')   # fixed / stepdown
     ko_lockout     = db.Column(db.Integer, default=1)            # 閉鎖期（月）
+    ko_start_pct   = db.Column(db.Float)                         # stepdown 起始KO，如 0.98 = 98%
+    ko_stepdown_pct = db.Column(db.Float)                        # 每月遞減，如 0.03 = 3%
+    observation_dates = db.Column(db.Text)                       # 比價日 JSON，如 ["2025-11-14","2025-12-15",...]
     special_notes  = db.Column(db.Text)
     status         = db.Column(db.String(20), default='active')  # active / ko_exited / matured
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
@@ -87,6 +90,7 @@ class Underlying(db.Model):
     strike_level   = db.Column(db.Float)
     eki_level      = db.Column(db.Float)
     ko_hit         = db.Column(db.Boolean, default=False)
+    ko_hit_date    = db.Column(db.Date)                    # 記憶式出場：鎖定日期
     latest_price   = db.Column(db.Float)
     price_date     = db.Column(db.Date)
     position_order = db.Column(db.Integer)

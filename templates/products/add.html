@@ -65,8 +65,17 @@
     </div>
 
     <div class="row g-3 mt-1">
-        <div class="col-md-2">
-            <label class="form-label">KO% (自動出場)</label>
+        <div class="col-md-3">
+            <label class="form-label">KO 類型</label>
+            <select name="ko_type" id="ko_type" class="form-select">
+                <option value="fixed">FCN（固定 KO）</option>
+                <option value="stepdown">Stepdown FCN（遞減 KO）</option>
+                <option value="dac">DAC（區間配息）</option>
+            </select>
+        </div>
+        <!-- Fixed FCN: 單一 KO% -->
+        <div class="col-md-2" id="fixed_ko_wrap">
+            <label class="form-label">KO%</label>
             <input name="ko_pct" type="number" step="0.01" class="form-control" placeholder="100">
         </div>
         <div class="col-md-2">
@@ -78,15 +87,25 @@
             <input name="eki_pct" type="number" step="0.01" class="form-control" placeholder="60">
         </div>
         <div class="col-md-3">
-            <label class="form-label">KO 類型</label>
-            <select name="ko_type" class="form-select">
-                <option value="fixed">Fixed</option>
-                <option value="stepdown">Stepdown</option>
-            </select>
-        </div>
-        <div class="col-md-3">
             <label class="form-label">備注</label>
-            <input name="special_notes" class="form-control" placeholder="stepdown 3%, AUD...">
+            <input name="special_notes" class="form-control" placeholder="備注...">
+        </div>
+    </div>
+
+    <!-- Stepdown FCN 專用欄位 -->
+    <div id="stepdown_section" class="row g-3 mt-1" style="display:none;">
+        <div class="col-md-2">
+            <label class="form-label">起始 KO%</label>
+            <input name="ko_start_pct" id="ko_start_pct" type="number" step="0.01" class="form-control" placeholder="98">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">每月遞減%</label>
+            <input name="ko_stepdown_pct" id="ko_stepdown_pct" type="number" step="0.01" class="form-control" placeholder="3">
+        </div>
+        <div class="col-12 mt-2">
+            <strong style="font-size:0.9rem;">每月比價日（請逐月填入實際日期）</strong>
+            <div id="obs_dates_container" class="row g-2 mt-1"></div>
+            <div id="obs_preview" class="mt-2" style="font-size:0.82rem; color:var(--fcn-text-muted);"></div>
         </div>
     </div>
 
@@ -120,14 +139,22 @@
                     <option value="NFLX">NFLX - Netflix</option>
                     <option value="UBER">UBER - Uber</option>
                 </optgroup>
-                <optgroup label="金融/醫療/其他">
-                    <option value="UNH">UNH - 聯合健康</option>
-                    <option value="JPM">JPM - 摩根大通</option>
-                    <option value="GS">GS - 高盛</option>
+                <optgroup label="能源/航空/其他">
+                    <option value="VST">VST - 維斯達公司</option>
+                    <option value="UAL">UAL - 聯合航空</option>
+                    <option value="PLTR">PLTR - 帕蘭提爾</option>
+                    <option value="CRWV">CRWV - CrowdStrike</option>
+                    <option value="NEM">NEM - 紐蒙特礦業</option>
+                    <option value="BMNR">BMNR - Beamr Imaging</option>
                     <option value="BA">BA - 波音</option>
                     <option value="AAL">AAL - 美國航空</option>
                     <option value="AA">AA - 美國鋁業</option>
                     <option value="NKE">NKE - Nike</option>
+                </optgroup>
+                <optgroup label="金融/醫療">
+                    <option value="UNH">UNH - 聯合健康</option>
+                    <option value="JPM">JPM - 摩根大通</option>
+                    <option value="GS">GS - 高盛</option>
                     <option value="COIN">COIN - Coinbase</option>
                 </optgroup>
             </select>
@@ -188,6 +215,68 @@
 
 {% block scripts %}
 <script>
+// ── Stepdown FCN 動態切換 ──
+const koType = document.getElementById('ko_type');
+const fixedWrap = document.getElementById('fixed_ko_wrap');
+const stepdownSection = document.getElementById('stepdown_section');
+const obsContainer = document.getElementById('obs_dates_container');
+const obsPreview = document.getElementById('obs_preview');
+const tenorInput = document.querySelector('[name=tenor_months]');
+
+function toggleStepdown() {
+    const isStepdown = koType.value === 'stepdown';
+    fixedWrap.style.display = isStepdown ? 'none' : '';
+    stepdownSection.style.display = isStepdown ? '' : 'none';
+    if (isStepdown) generateObsFields();
+}
+koType.addEventListener('change', toggleStepdown);
+
+// Tenor 變動時也重新產生
+tenorInput.addEventListener('change', () => {
+    if (koType.value === 'stepdown') generateObsFields();
+});
+
+// 根據 Tenor 自動產生空白日期欄位
+function generateObsFields() {
+    const tenor = parseInt(tenorInput.value);
+    if (!tenor) { obsContainer.innerHTML = ''; obsPreview.innerHTML = ''; return; }
+    // 保留已填的值
+    const existing = {};
+    document.querySelectorAll('.obs-date-input').forEach(el => {
+        const idx = el.name.replace('obs_date_', '');
+        if (el.value) existing[idx] = el.value;
+    });
+    obsContainer.innerHTML = '';
+    for (let i = 0; i < tenor; i++) {
+        const div = document.createElement('div');
+        div.className = 'col-md-2';
+        const val = existing[i] || '';
+        div.innerHTML = `<label class="form-label" style="font-size:0.8rem;">第 ${i+1} 月</label>
+            <input name="obs_date_${i}" type="date" class="form-control form-control-sm obs-date-input" value="${val}">`;
+        obsContainer.appendChild(div);
+    }
+    document.querySelectorAll('.obs-date-input').forEach(el => el.addEventListener('change', updatePreview));
+    updatePreview();
+}
+
+// 即時預覽 KO 排程
+function updatePreview() {
+    const startKo = parseFloat(document.getElementById('ko_start_pct').value);
+    const stepdown = parseFloat(document.getElementById('ko_stepdown_pct').value);
+    const dates = document.querySelectorAll('.obs-date-input');
+    if (!startKo || !stepdown || dates.length === 0) { obsPreview.innerHTML = ''; return; }
+    let html = '<table class="table table-sm table-bordered" style="font-size:0.8rem; max-width:400px;"><thead><tr><th>月</th><th>比價日</th><th>KO%</th></tr></thead><tbody>';
+    dates.forEach((el, i) => {
+        const ko = startKo - stepdown * (i + 1);
+        const dateVal = el.value ? el.value.substring(5).replace('-', '/') : '未填';
+        html += `<tr><td>${i+1}</td><td>${dateVal}</td><td>${ko.toFixed(0)}%</td></tr>`;
+    });
+    html += '</tbody></table>';
+    obsPreview.innerHTML = html;
+}
+document.getElementById('ko_start_pct').addEventListener('input', updatePreview);
+document.getElementById('ko_stepdown_pct').addEventListener('input', updatePreview);
+
 document.getElementById('save_new_client').addEventListener('click', async () => {
     const name = document.getElementById('new_client_name').value.trim();
     if (!name) { FCN.toast('請輸入客戶姓名', 'warning'); return; }

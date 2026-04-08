@@ -12,13 +12,26 @@
 </div>
 
 <!-- 持倉中 -->
-<div class="section-title">持倉中 <span class="section-count">管理總金額：USD {{ '{:,.0f}'.format(total_amount) }}</span></div>
+<div class="section-title d-flex align-items-center justify-content-between flex-wrap">
+    <div>持倉中 <span class="section-count">管理總金額：{% for cur, amt in totals_by_currency|dictsort %}{{ cur }} {{ '{:,.0f}'.format(amt) }}{% if not loop.last %} / {% endif %}{% endfor %}</span></div>
+    <div class="d-flex align-items-center gap-2" style="font-size:0.85rem;">
+        <label style="white-space:nowrap;">排序：</label>
+        <select id="sortSelect" class="form-select form-select-sm" style="width:auto;">
+            <option value="default">預設（建立時間）</option>
+            <option value="amount_desc">金額 大→小</option>
+            <option value="amount_asc">金額 小→大</option>
+            <option value="days_asc">剩餘天數 少→多</option>
+            <option value="days_desc">剩餘天數 多→少</option>
+        </select>
+    </div>
+</div>
 <div class="card mb-4">
     <div class="table-scroll">
     <table class="table table-fcn">
         <thead>
             <tr>
                 <th>商品代碼</th>
+                <th>類型</th>
                 <th>發行商</th>
                 <th>Tenor</th>
                 <th>年利率</th>
@@ -29,14 +42,16 @@
                 <th>剩餘天數</th>
             </tr>
         </thead>
-        <tbody>
+        <tbody id="activeBody">
         {% for p in active %}
+            {% set total_amt = p.positions|selectattr('investment_amount')|map(attribute='investment_amount')|sum %}
             {% set positions = p.positions %}
             {% set row_count = positions|length if positions|length > 0 else 1 %}
             {% for pos in positions %}
-            <tr data-prod-row>
+            <tr data-prod-row data-group="{{ p.id }}" data-amount="{{ total_amt or 0 }}" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}" data-order="{{ loop.index0 }}">
                 {% if loop.first %}
                 <td rowspan="{{ row_count }}"><a href="/products/{{ p.id }}" class="fw-bold text-decoration-none">{{ p.product_code }}</a></td>
+                <td rowspan="{{ row_count }}">{% if p.ko_type == 'stepdown' %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Stepdown</span>{% elif p.ko_type == 'dac' %}<span class="badge bg-info text-dark" style="font-size:0.65rem;">DAC</span>{% else %}<span class="badge bg-secondary" style="font-size:0.65rem;">FCN</span>{% endif %}</td>
                 <td rowspan="{{ row_count }}">{{ p.issuer or '-' }}</td>
                 <td rowspan="{{ row_count }}">{{ p.tenor_months }}M</td>
                 <td rowspan="{{ row_count }}">{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '-' }}</td>
@@ -56,8 +71,9 @@
             </tr>
             {% endfor %}
             {% if not positions %}
-            <tr data-prod-row>
+            <tr data-prod-row data-group="{{ p.id }}" data-amount="0" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}" data-order="0">
                 <td><a href="/products/{{ p.id }}" class="fw-bold text-decoration-none">{{ p.product_code }}</a></td>
+                <td>{% if p.ko_type == 'stepdown' %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Stepdown</span>{% elif p.ko_type == 'dac' %}<span class="badge bg-info text-dark" style="font-size:0.65rem;">DAC</span>{% else %}<span class="badge bg-secondary" style="font-size:0.65rem;">FCN</span>{% endif %}</td>
                 <td>{{ p.issuer or '-' }}</td>
                 <td>{{ p.tenor_months }}M</td>
                 <td>{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '-' }}</td>
@@ -87,6 +103,7 @@
         <thead>
             <tr>
                 <th>商品代碼</th>
+                <th>類型</th>
                 <th>發行商</th>
                 <th>Tenor</th>
                 <th>年利率</th>
@@ -101,6 +118,7 @@
             <tr data-prod-row>
                 {% if loop.first %}
                 <td rowspan="{{ p.positions|length }}"><a href="/products/{{ p.id }}" class="text-decoration-none">{{ p.product_code }}</a></td>
+                <td rowspan="{{ p.positions|length }}">{% if p.ko_type == 'stepdown' %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Stepdown</span>{% elif p.ko_type == 'dac' %}<span class="badge bg-info text-dark" style="font-size:0.65rem;">DAC</span>{% else %}<span class="badge bg-secondary" style="font-size:0.65rem;">FCN</span>{% endif %}</td>
                 <td rowspan="{{ p.positions|length }}">{{ p.issuer or '-' }}</td>
                 <td rowspan="{{ p.positions|length }}">{{ p.tenor_months }}M</td>
                 <td rowspan="{{ p.positions|length }}">{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '-' }}</td>
@@ -124,5 +142,33 @@
 {% block scripts %}
 <script>
     FCN.initSearch('#prodSearch', '[data-prod-row]', 'td');
+
+    // 排序功能
+    document.getElementById('sortSelect').addEventListener('change', function() {
+        const tbody = document.getElementById('activeBody');
+        if (!tbody) return;
+        const rows = Array.from(tbody.querySelectorAll('tr[data-group]'));
+
+        // 按 group 分組
+        const groups = {};
+        rows.forEach(r => {
+            const gid = r.dataset.group;
+            if (!groups[gid]) groups[gid] = { rows: [], amount: parseFloat(r.dataset.amount) || 0, days: parseFloat(r.dataset.days) || 9999 };
+            groups[gid].rows.push(r);
+        });
+
+        const groupList = Object.values(groups);
+        const mode = this.value;
+        if (mode === 'amount_desc') groupList.sort((a, b) => b.amount - a.amount);
+        else if (mode === 'amount_asc') groupList.sort((a, b) => a.amount - b.amount);
+        else if (mode === 'days_asc') groupList.sort((a, b) => a.days - b.days);
+        else if (mode === 'days_desc') groupList.sort((a, b) => b.days - a.days);
+
+        // 重新排列 DOM
+        groupList.forEach(g => {
+            g.rows.sort((a, b) => parseInt(a.dataset.order) - parseInt(b.dataset.order));
+            g.rows.forEach(r => tbody.appendChild(r));
+        });
+    });
 </script>
 {% endblock %}

@@ -10,7 +10,9 @@
                         <div class="col-md-4">
                             <label class="form-label">商品類型</label>
                             <select name="product_type" class="form-select">
-                                <option value="FCN">FCN (固定配息)</option>
+                                <option value="FCN">FCN（固定配息）</option>
+                                <option value="Stepdown FCN">FCN(固定配息)-步階式出場</option>
+                                <option value="DAC">DAC（區間配息）</option>
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -36,9 +38,17 @@
                             <label class="form-label">Strike %</label>
                             <input type="text" name="strike_pct" class="form-control" placeholder="例：72.05" required>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-3" id="ko_fixed_wrap">
                             <label class="form-label">KO %</label>
                             <input type="text" name="ko_pct" class="form-control" placeholder="例：100">
+                        </div>
+                        <div class="col-md-3" id="ko_start_wrap" style="display:none;">
+                            <label class="form-label">起始 KO%</label>
+                            <input type="text" name="ko_start_pct_q" class="form-control" placeholder="例：90">
+                        </div>
+                        <div class="col-md-3" id="ko_step_wrap" style="display:none;">
+                            <label class="form-label">每月遞減%</label>
+                            <input type="text" name="ko_stepdown_q" class="form-control" placeholder="例：5">
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Coupon %</label>
@@ -145,6 +155,16 @@
 
 {% block scripts %}
 <script>
+// 步階式出場切換
+const ptSelect = document.querySelector('[name=product_type]');
+function toggleStepdownQuote() {
+    const isSD = ptSelect.value === 'Stepdown FCN';
+    document.getElementById('ko_fixed_wrap').style.display = isSD ? 'none' : '';
+    document.getElementById('ko_start_wrap').style.display = isSD ? '' : 'none';
+    document.getElementById('ko_step_wrap').style.display = isSD ? '' : 'none';
+}
+ptSelect.addEventListener('change', toggleStepdownQuote);
+
 ['btnPng', 'btnPdf'].forEach(id => {
     document.getElementById(id).addEventListener('click', function() {
         const fmt = id === 'btnPng' ? 'png' : 'pdf';
