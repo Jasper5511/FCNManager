@@ -73,9 +73,7 @@ def parse_observation_dates(e_values, start_date):
 
 
 def parse_client_info(text, currency):
-    """解析客戶 '陳怡萱 5' → ('陳怡萱', 50000)
-       '溢峰 1400(媽)' → ('溢峰', 14000000)
-       '車旭OSU25' → ('車旭', None) — OSU25 是商品備注非金額
+    """解析客戶 '姓名 金額' → ('姓名', 金額*10000)
     """
     if not text or not isinstance(text, str):
         return None, None
@@ -84,14 +82,14 @@ def parse_client_info(text, currency):
     clean = re.sub(r'[\(（].*?[\)）]', '', text).strip()
 
     # 先嘗試：中文名 + 空格/無空格 + 純數字結尾
-    # 「陳怡萱 5」「楊慧萱5」「吉徑 240」「溢峰 1400」
+    # 「姓名 金額」「姓名金額」
     m = re.match(r'^([\u4e00-\u9fff]{2,5})\s*(\d+\.?\d*)$', clean)
     if m:
         name = m.group(1).strip()
         amount = float(m.group(2)) * 10000  # 萬 → 實際
         return name, amount
 
-    # 無數字或含英文（如「車旭OSU25」「明銳 5」）
+    # 無數字或含英文備注
     m2 = re.match(r'^([\u4e00-\u9fff]{2,5})\s+(\d+\.?\d*)$', clean)
     if m2:
         return m2.group(1).strip(), float(m2.group(2)) * 10000
