@@ -1068,6 +1068,21 @@ def ko_exit(pid):
     return redirect(url_for('dashboard'))
 
 
+@app.route('/products/<int:pid>/delete', methods=['POST'])
+@login_required
+def delete_product(pid):
+    p = Product.query.get_or_404(pid)
+    # 刪除相關標的、持倉
+    for u in p.underlyings:
+        db.session.delete(u)
+    for pos in p.positions:
+        db.session.delete(pos)
+    db.session.delete(p)
+    db.session.commit()
+    flash(f'{p.product_code} 已刪除', 'success')
+    return redirect(url_for('products'))
+
+
 @app.route('/products/<int:pid>/reactivate', methods=['POST'])
 @login_required
 def reactivate(pid):
