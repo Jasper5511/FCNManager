@@ -9,7 +9,7 @@ import os
 TICKER_NAME = {
     'NVDA': '輝達', 'AVGO': '博通', 'TSM': '台積電', 'AMD': '超微',
     'MU': '美光', 'ARM': '安謀', 'QCOM': '高通', 'INTC': '英特爾',
-    'AAPL': '蘋果', 'MSFT': '微軟', 'GOOG': '谷歌', 'AMZN': '亞馬遜',
+    'AAPL': '蘋果', 'MSFT': '微軟', 'GOOG': '谷歌', 'GOOGL': '谷歌', 'AMZN': '亞馬遜',
     'META': '臉書', 'TSLA': '特斯拉', 'ORCL': '甲骨文', 'CRM': '賽富時',
     'NFLX': '網飛', 'UBER': '優步', 'UNH': '聯合健康', 'JPM': '摩根大通',
     'GS': '高盛', 'BA': '波音', 'AAL': '美國航空', 'AA': '美國鋁業',
