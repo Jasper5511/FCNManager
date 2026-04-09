@@ -725,6 +725,16 @@ def dashboard():
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
 
+    # 檢查是否有商品全部 KO 出場（提示使用者）
+    for p in list(active):
+        if p.status == 'active':
+            uls = [u for u in p.underlyings if u.initial_price]
+            if uls and all(u.ko_hit for u in uls):
+                p.status = 'ko_exited'
+                db.session.commit()
+                active.remove(p)
+                flash(f'{p.product_code} 已全部 KO 出場！已自動移至已出場區', 'warning')
+
     # 檢查價格是否過期，過期就背景靜默更新（不阻塞頁面載入）
     _maybe_bg_update(current_uid(), active)
 
