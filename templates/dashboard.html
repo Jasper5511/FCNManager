@@ -18,8 +18,20 @@
 </div>
 
 {% if active %}
+<div class="d-flex justify-content-end mb-2">
+    <div class="d-flex align-items-center gap-2" style="font-size:0.85rem;">
+        <label style="white-space:nowrap;">排序：</label>
+        <select id="dashSort" class="form-select form-select-sm" style="width:auto;">
+            <option value="default">預設（建立時間）</option>
+            <option value="trade_desc">交易日 新→舊</option>
+            <option value="trade_asc">交易日 舊→新</option>
+            <option value="days_asc">剩餘天數 少→多</option>
+            <option value="days_desc">剩餘天數 多→少</option>
+        </select>
+    </div>
+</div>
 {% for p in active %}
-<div class="card product-card fade-in" data-searchable>
+<div class="card product-card fade-in" data-searchable data-trade="{{ p.trade_date.isoformat() if p.trade_date else '0000-00-00' }}" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}">
     <div class="card-header-fcn">
         <div class="product-info">
             {% for pos in p.positions %}
@@ -189,5 +201,20 @@
 <script>
     FCN.initSearch('#dashSearch', '[data-searchable]', '.client-badge, .product-code, .product-meta, .fw-bold, .product-params');
 
+    // 庫存總覽排序
+    const dashSort = document.getElementById('dashSort');
+    if (dashSort) {
+        dashSort.addEventListener('change', function() {
+            const cards = Array.from(document.querySelectorAll('.product-card[data-searchable]'));
+            if (!cards.length) return;
+            const parent = cards[0].parentNode;
+            const mode = this.value;
+            if (mode === 'trade_desc') cards.sort((a, b) => (b.dataset.trade || '').localeCompare(a.dataset.trade || ''));
+            else if (mode === 'trade_asc') cards.sort((a, b) => (a.dataset.trade || '').localeCompare(b.dataset.trade || ''));
+            else if (mode === 'days_asc') cards.sort((a, b) => parseFloat(a.dataset.days) - parseFloat(b.dataset.days));
+            else if (mode === 'days_desc') cards.sort((a, b) => parseFloat(b.dataset.days) - parseFloat(a.dataset.days));
+            cards.forEach(c => parent.appendChild(c));
+        });
+    }
 </script>
 {% endblock %}

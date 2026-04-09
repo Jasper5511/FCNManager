@@ -18,6 +18,8 @@
         <label style="white-space:nowrap;">排序：</label>
         <select id="sortSelect" class="form-select form-select-sm" style="width:auto;">
             <option value="default">預設（建立時間）</option>
+            <option value="trade_desc">交易日 新→舊</option>
+            <option value="trade_asc">交易日 舊→新</option>
             <option value="amount_desc">金額 大→小</option>
             <option value="amount_asc">金額 小→大</option>
             <option value="days_asc">剩餘天數 少→多</option>
@@ -48,7 +50,7 @@
             {% set positions = p.positions %}
             {% set row_count = positions|length if positions|length > 0 else 1 %}
             {% for pos in positions %}
-            <tr data-prod-row data-group="{{ p.id }}" data-amount="{{ total_amt or 0 }}" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}" data-order="{{ loop.index0 }}">
+            <tr data-prod-row data-group="{{ p.id }}" data-amount="{{ total_amt or 0 }}" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}" data-trade="{{ p.trade_date.isoformat() if p.trade_date else '0000-00-00' }}" data-order="{{ loop.index0 }}">
                 {% if loop.first %}
                 <td rowspan="{{ row_count }}"><a href="/products/{{ p.id }}" class="fw-bold text-decoration-none">{{ p.product_code }}</a></td>
                 <td rowspan="{{ row_count }}">{% if p.ko_type == 'stepdown' %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Stepdown</span>{% elif p.ko_type == 'dac' %}<span class="badge bg-info text-dark" style="font-size:0.65rem;">DAC</span>{% else %}<span class="badge bg-secondary" style="font-size:0.65rem;">FCN</span>{% endif %}</td>
@@ -71,7 +73,7 @@
             </tr>
             {% endfor %}
             {% if not positions %}
-            <tr data-prod-row data-group="{{ p.id }}" data-amount="0" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}" data-order="0">
+            <tr data-prod-row data-group="{{ p.id }}" data-amount="0" data-days="{{ p.days_to_maturity if p.days_to_maturity is not none else 9999 }}" data-trade="{{ p.trade_date.isoformat() if p.trade_date else '0000-00-00' }}" data-order="0">
                 <td><a href="/products/{{ p.id }}" class="fw-bold text-decoration-none">{{ p.product_code }}</a></td>
                 <td>{% if p.ko_type == 'stepdown' %}<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Stepdown</span>{% elif p.ko_type == 'dac' %}<span class="badge bg-info text-dark" style="font-size:0.65rem;">DAC</span>{% else %}<span class="badge bg-secondary" style="font-size:0.65rem;">FCN</span>{% endif %}</td>
                 <td>{{ p.issuer or '-' }}</td>
@@ -153,7 +155,7 @@
         const groups = {};
         rows.forEach(r => {
             const gid = r.dataset.group;
-            if (!groups[gid]) groups[gid] = { rows: [], amount: parseFloat(r.dataset.amount) || 0, days: parseFloat(r.dataset.days) || 9999 };
+            if (!groups[gid]) groups[gid] = { rows: [], amount: parseFloat(r.dataset.amount) || 0, days: parseFloat(r.dataset.days) || 9999, trade: r.dataset.trade || '0000-00-00' };
             groups[gid].rows.push(r);
         });
 
@@ -163,6 +165,8 @@
         else if (mode === 'amount_asc') groupList.sort((a, b) => a.amount - b.amount);
         else if (mode === 'days_asc') groupList.sort((a, b) => a.days - b.days);
         else if (mode === 'days_desc') groupList.sort((a, b) => b.days - a.days);
+        else if (mode === 'trade_desc') groupList.sort((a, b) => b.trade.localeCompare(a.trade));
+        else if (mode === 'trade_asc') groupList.sort((a, b) => a.trade.localeCompare(b.trade));
 
         // 重新排列 DOM
         groupList.forEach(g => {
