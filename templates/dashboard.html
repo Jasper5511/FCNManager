@@ -70,6 +70,21 @@
             <div><strong>比價日：</strong>{{ p.start_date.strftime('%Y/%m/%d') if p.start_date and p.start_date is not string else (p.start_date or '-') }}</div>
             <div><strong>到期日：</strong>{{ p.maturity_date.strftime('%Y/%m/%d') if p.maturity_date and p.maturity_date is not string else (p.maturity_date or '-') }}</div>
         </div>
+        {# ── KO 出場提醒橫幅 ── #}
+        {% set ko_count = p.underlyings|selectattr('ko_hit')|list|length %}
+        {% set total_count = p.underlyings|list|length %}
+        {% if ko_count > 0 %}
+        <div class="ko-alert-banner {{ 'ko-all' if ko_count == total_count else 'ko-partial' }}">
+            {% if ko_count == total_count %}
+                <span class="ko-alert-icon">&#9888;</span>
+                <span class="ko-alert-text">全部 {{ total_count }} 檔標的已達 KO 出場價！請盡速安排客戶出場</span>
+                <a href="/products/{{ p.id }}/ko_exit" class="btn btn-sm btn-light ms-2" onclick="return confirm('確認將 {{ p.product_code }} 移至已出場(KO)？')">立即出場</a>
+            {% else %}
+                <span class="ko-alert-icon">&#128308;</span>
+                <span class="ko-alert-text">{{ ko_count }}/{{ total_count }} 檔標的已達 KO 出場價 — {% for u in p.underlyings if u.ko_hit %}{{ u.ticker }}{% if not loop.last %}、{% endif %}{% endfor %}</span>
+            {% endif %}
+        </div>
+        {% endif %}
         {% if p.ko_type == 'stepdown' and stepdown_schedules.get(p.id) %}
         <div class="mb-3">
             <div class="table-scroll">
@@ -148,7 +163,9 @@
                 </td>
                 <td class="text-center">
                     {% if u.latest_price %}
-                        {% if u.eki_level and u.latest_price <= u.eki_level %}
+                        {% if u.ko_level and u.latest_price >= u.ko_level %}
+                            <span class="badge bg-success">已達 KO 出場價</span>
+                        {% elif u.eki_level and u.latest_price <= u.eki_level %}
                             <span class="badge bg-danger">觸及生效價!</span>
                         {% elif u.strike_level and u.latest_price <= u.strike_level %}
                             {% if p.ko_type == 'dac' %}

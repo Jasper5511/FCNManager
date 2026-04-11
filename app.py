@@ -138,35 +138,15 @@ def _setup_scheduler():
                                                 u.ko_hit_date = obs_d
                                                 app.logger.info(f'[排程] Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1}')
                                             break
-                                    # ── 一般 FCN ──
-                                    elif p.ko_type != 'stepdown' and u.ko_level and not u.ko_hit and p.start_date:
-                                        from price_fetcher import _HISTORY_SOURCES
+                                    # ── 一般 FCN: 直接用最新收盤價判定 KO ──
+                                    elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
                                         lockout = p.ko_lockout or 1
                                         ko_start = p.start_date + relativedelta(months=lockout)
                                         if today >= ko_start:
-                                            ko_confirms = 0
-                                            for hist_fn in _HISTORY_SOURCES[:6]:
-                                                try:
-                                                    df = hist_fn(u.ticker, ko_start, today)
-                                                    if df is not None and not df.empty:
-                                                        c = df['Close'].squeeze()
-                                                        if (c >= u.ko_level).any():
-                                                            ko_confirms += 1
-                                                            if ko_confirms >= 2:
-                                                                break
-                                                except Exception:
-                                                    continue
-                                            if ko_confirms >= 2:
+                                            if u.latest_price >= u.ko_level:
                                                 u.ko_hit = True
                                 except Exception:
                                     db.session.rollback()
-                        # Stepdown: 檢查全部標的都鎖定 → 自動出場
-                        for p in active:
-                            if p.ko_type == 'stepdown' and p.status == 'active':
-                                uls = [u for u in p.underlyings if u.initial_price]
-                                if uls and all(u.ko_hit for u in uls):
-                                    p.status = 'ko_exited'
-                                    app.logger.info(f'[排程] Stepdown 全部鎖定，自動出場: {p.product_code}')
                         db.session.commit()
                     except Exception as e:
                         db.session.rollback()
@@ -679,24 +659,12 @@ def _maybe_bg_update(uid, active):
                             if u.ticker in prices:
                                 u.latest_price = prices[u.ticker]
                                 u.price_date = price_date
-                            if u.ko_level and not u.ko_hit and p.start_date:
-                                from price_fetcher import _HISTORY_SOURCES
+                            # 一般 FCN: 直接用最新收盤價判定 KO
+                            if p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
                                 lockout = p.ko_lockout or 1
                                 ko_start = p.start_date + relativedelta(months=lockout)
                                 if today >= ko_start:
-                                    ko_confirms = 0
-                                    for hist_fn in _HISTORY_SOURCES[:6]:
-                                        try:
-                                            df = hist_fn(u.ticker, ko_start, today)
-                                            if df is not None and not df.empty:
-                                                c = df['Close'].squeeze()
-                                                if (c >= u.ko_level).any():
-                                                    ko_confirms += 1
-                                                    if ko_confirms >= 2:
-                                                        break
-                                        except Exception:
-                                            continue
-                                    if ko_confirms >= 2:
+                                    if u.latest_price >= u.ko_level:
                                         u.ko_hit = True
                         except Exception:
                             db.session.rollback()
@@ -725,15 +693,24 @@ def dashboard():
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
 
-    # 檢查是否有商品全部 KO 出場（提示使用者）
-    for p in list(active):
-        if p.status == 'active':
-            uls = [u for u in p.underlyings if u.initial_price]
-            if uls and all(u.ko_hit for u in uls):
-                p.status = 'ko_exited'
-                db.session.commit()
-                active.remove(p)
-                flash(f'{p.product_code} 已全部 KO 出場！已自動移至已出場區', 'warning')
+    # 一般 FCN: 根據最新收盤價自動更新 KO 狀態
+    from dateutil.relativedelta import relativedelta
+    today = date.today()
+    ko_changed = False
+    for p in active:
+        if p.ko_type != 'stepdown' and p.start_date:
+            lockout = p.ko_lockout or 1
+            ko_start = p.start_date + relativedelta(months=lockout)
+            if today >= ko_start:
+                for u in p.underlyings:
+                    if u.ko_level and u.latest_price and not u.ko_hit:
+                        if u.latest_price >= u.ko_level:
+                            u.ko_hit = True
+                            ko_changed = True
+    if ko_changed:
+        db.session.commit()
+
+    # 全部達 KO 只提醒，不自動移出場（由使用者自行決定）
 
     # 檢查價格是否過期，過期就背景靜默更新（不阻塞頁面載入）
     _maybe_bg_update(current_uid(), active)
@@ -846,35 +823,15 @@ def fetch_prices():
                                     app.logger.info(f'Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1} ({obs_str}) 收盤{u.latest_price:.2f} >= KO{ko_price_month:.2f}')
                                 break  # 一天只會匹配一個比價日
 
-                        # ── 一般 FCN: 歷史價格判定 ──
-                        elif p.ko_type != 'stepdown' and u.ko_level and not u.ko_hit and p.start_date:
-                            from price_fetcher import _HISTORY_SOURCES
+                        # ── 一般 FCN: 直接用最新收盤價判定 KO ──
+                        elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
                             lockout = p.ko_lockout or 1
                             ko_start = p.start_date + relativedelta(months=lockout)
                             if today >= ko_start:
-                                ko_confirms = 0
-                                for hist_fn in _HISTORY_SOURCES[:6]:
-                                    try:
-                                        df = hist_fn(u.ticker, ko_start, today)
-                                        if df is not None and not df.empty:
-                                            c = df['Close'].squeeze()
-                                            if (c >= u.ko_level).any():
-                                                ko_confirms += 1
-                                                if ko_confirms >= 2:
-                                                    break
-                                    except Exception:
-                                        continue
-                                if ko_confirms >= 2:
+                                if u.latest_price >= u.ko_level:
                                     u.ko_hit = True
                     except Exception:
                         db.session.rollback()
-            # Stepdown: 全部標的鎖定 → 自動出場
-            for p in active:
-                if p.ko_type == 'stepdown' and p.status == 'active':
-                    uls = [u for u in p.underlyings if u.initial_price]
-                    if uls and all(u.ko_hit for u in uls):
-                        p.status = 'ko_exited'
-                        app.logger.info(f'Stepdown 全部鎖定，自動出場: {p.product_code}')
             try:
                 db.session.commit()
                 app.logger.info(f'手動更新完成：user={uid}')

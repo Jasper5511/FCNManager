@@ -367,6 +367,34 @@ body {
 .days-badge.warning { background: var(--fcn-orange-bg); color: var(--fcn-orange-text); }
 .days-badge.ok { background: var(--fcn-green-bg); color: var(--fcn-green-text); }
 
+/* --- KO Alert Banner --- */
+.ko-alert-banner {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-radius: 8px;
+    margin: 8px 0 12px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    animation: ko-pulse 2s ease-in-out infinite;
+}
+.ko-alert-banner.ko-all {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(220, 38, 38, 0.4);
+}
+.ko-alert-banner.ko-partial {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+.ko-alert-icon { font-size: 1.3rem; margin-right: 8px; }
+.ko-alert-text { flex: 1; }
+@keyframes ko-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+
 /* --- KO Toggle Button --- */
 .ko-toggle {
     min-width: 38px;
