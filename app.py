@@ -574,17 +574,17 @@ def export_excel():
     # Sheet 1: 持倉
     ws1 = wb.active
     ws1.title = '持倉'
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
     write_sheet(ws1, active)
 
     # Sheet 2: KO
     ws2 = wb.create_sheet('KO')
-    ko = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at).all()
+    ko = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
     write_sheet(ws2, ko, is_ko_sheet=True)
 
     # Sheet 3: 到期
     ws3 = wb.create_sheet('到期')
-    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at).all()
+    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
     write_sheet(ws3, matured)
 
     buf = BytesIO()
@@ -684,7 +684,7 @@ def dashboard():
     try:
         active = Product.query.filter_by(status='active', user_id=current_uid()) \
             .options(joinedload(Product.underlyings), joinedload(Product.positions).joinedload(Position.client)) \
-            .order_by(Product.created_at).all()
+            .order_by(Product.trade_date, Product.created_at).all()
     except Exception as e:
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
@@ -895,9 +895,9 @@ def delete_client(cid):
 @app.route('/products')
 @login_required
 def products():
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
-    ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at.desc()).all()
-    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at.desc()).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
+    ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.trade_date.desc(), Product.created_at.desc()).all()
+    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.trade_date.desc(), Product.created_at.desc()).all()
     # 計算持倉總金額（分幣別）
     from collections import defaultdict
     totals_by_currency = defaultdict(float)
@@ -1177,7 +1177,7 @@ def briefing():
     today = date.today()
     uid = current_uid()
 
-    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.trade_date, Product.created_at).all()
 
     # 即將到期（30天內）
     expiring = [p for p in active if p.maturity_date and p.days_to_maturity is not None and 0 <= p.days_to_maturity <= 30]
@@ -1574,7 +1574,7 @@ def debug_db():
     safe_uri = re.sub(r'://[^@]+@', '://***@', db_uri) if db_uri else 'NOT SET'
     uid = current_uid()
     # 跟 dashboard 完全一樣的查詢
-    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.trade_date, Product.created_at).all()
     products_info = [{'id': p.id, 'code': p.product_code, 'user_id': p.user_id, 'status': p.status, 'created_at': str(p.created_at)} for p in active]
     # 也查不帶 order_by 的
     active2 = Product.query.filter_by(status='active', user_id=uid).all()
