@@ -138,11 +138,9 @@ def _setup_scheduler():
                                                 u.ko_hit_date = obs_d
                                                 app.logger.info(f'[排程] Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1}')
                                             break
-                                    # ── 一般 FCN: 直接用最新收盤價判定 KO ──
+                                    # ── 一般 FCN: start_date = 比價日 = KO 觀察起始日 ──
                                     elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
-                                        lockout = p.ko_lockout or 1
-                                        ko_start = p.start_date + relativedelta(months=lockout)
-                                        if today >= ko_start:
+                                        if today >= p.start_date:
                                             if u.latest_price >= u.ko_level:
                                                 u.ko_hit = True
                                 except Exception:
@@ -659,11 +657,9 @@ def _maybe_bg_update(uid, active):
                             if u.ticker in prices:
                                 u.latest_price = prices[u.ticker]
                                 u.price_date = price_date
-                            # 一般 FCN: 直接用最新收盤價判定 KO
+                            # 一般 FCN: start_date = 比價日 = KO 觀察起始日
                             if p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
-                                lockout = p.ko_lockout or 1
-                                ko_start = p.start_date + relativedelta(months=lockout)
-                                if today >= ko_start:
+                                if today >= p.start_date:
                                     if u.latest_price >= u.ko_level:
                                         u.ko_hit = True
                         except Exception:
@@ -693,20 +689,16 @@ def dashboard():
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
 
-    # 一般 FCN: 根據最新收盤價自動更新 KO 狀態
-    from dateutil.relativedelta import relativedelta
+    # 一般 FCN: start_date = 比價日 = KO 觀察起始日（含當日）
     today = date.today()
     ko_changed = False
     for p in active:
-        if p.ko_type != 'stepdown' and p.start_date:
-            lockout = p.ko_lockout or 1
-            ko_start = p.start_date + relativedelta(months=lockout)
-            if today >= ko_start:
-                for u in p.underlyings:
-                    if u.ko_level and u.latest_price and not u.ko_hit:
-                        if u.latest_price >= u.ko_level:
-                            u.ko_hit = True
-                            ko_changed = True
+        if p.ko_type != 'stepdown' and p.start_date and today >= p.start_date:
+            for u in p.underlyings:
+                if u.ko_level and u.latest_price and not u.ko_hit:
+                    if u.latest_price >= u.ko_level:
+                        u.ko_hit = True
+                        ko_changed = True
     if ko_changed:
         db.session.commit()
 
@@ -823,11 +815,9 @@ def fetch_prices():
                                     app.logger.info(f'Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1} ({obs_str}) 收盤{u.latest_price:.2f} >= KO{ko_price_month:.2f}')
                                 break  # 一天只會匹配一個比價日
 
-                        # ── 一般 FCN: 直接用最新收盤價判定 KO ──
+                        # ── 一般 FCN: start_date = 比價日 = KO 觀察起始日 ──
                         elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
-                            lockout = p.ko_lockout or 1
-                            ko_start = p.start_date + relativedelta(months=lockout)
-                            if today >= ko_start:
+                            if today >= p.start_date:
                                 if u.latest_price >= u.ko_level:
                                     u.ko_hit = True
                     except Exception:

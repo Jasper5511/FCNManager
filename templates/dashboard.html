@@ -163,7 +163,7 @@
                 </td>
                 <td class="text-center">
                     {% if u.latest_price %}
-                        {% if u.ko_level and u.latest_price >= u.ko_level %}
+                        {% if p.is_ko_observing and u.ko_level and u.latest_price >= u.ko_level %}
                             <span class="badge bg-success">已達 KO 出場價</span>
                         {% elif u.eki_level and u.latest_price <= u.eki_level %}
                             <span class="badge bg-danger">觸及生效價!</span>
@@ -173,6 +173,8 @@
                             {% else %}
                                 <span class="badge bg-warning text-dark">觸碰執行價!</span>
                             {% endif %}
+                        {% elif not p.is_ko_observing %}
+                            <span class="badge bg-secondary">尚未進入 KO 觀察期</span>
                         {% endif %}
                     {% endif %}
                 </td>

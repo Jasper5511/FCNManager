@@ -79,6 +79,13 @@ class Product(db.Model):
         uls = [u for u in self.underlyings if u.initial_price]
         return len(uls) > 0 and all(u.ko_hit for u in uls)
 
+    @property
+    def is_ko_observing(self):
+        """今天是否已進入 KO 觀察期（start_date = 比價日 = KO 觀察起始日）"""
+        if not self.start_date:
+            return False
+        return date.today() >= self.start_date
+
 
 class Underlying(db.Model):
     __tablename__ = 'underlyings'
