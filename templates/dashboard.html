@@ -54,11 +54,11 @@
                 {% set np = p.next_payment %}
                 {% if np %}
                     <span class="badge" style="background:rgba(13,110,253,0.15); color:#0d6efd; border:1px solid rgba(13,110,253,0.4); font-weight:500;">
-                        下次配息 {{ np.payment_date.strftime('%m/%d') }} · {{ p.paid_count }}/{{ p.total_periods }}
+                        下次配息 {{ np.payment_date.strftime('%m/%d') }} · 第 {{ np.period }} 期/共 {{ p.total_periods }} 期
                     </span>
                 {% else %}
                     <span class="badge" style="background:rgba(40,167,69,0.15); color:#28a745; border:1px solid rgba(40,167,69,0.4); font-weight:500;">
-                        全部配息完成 {{ p.total_periods }}/{{ p.total_periods }}
+                        全部 {{ p.total_periods }} 期配息完成
                     </span>
                 {% endif %}
             {% endif %}
