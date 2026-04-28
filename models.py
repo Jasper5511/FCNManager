@@ -67,6 +67,9 @@ class Product(db.Model):
     underlyings    = db.relationship('Underlying', back_populates='product',
                                      cascade='all, delete-orphan', lazy=True)
     positions      = db.relationship('Position', back_populates='product', lazy=True)
+    payment_schedule = db.relationship('PaymentSchedule', back_populates='product',
+                                       cascade='all, delete-orphan', lazy=True,
+                                       order_by='PaymentSchedule.period')
 
     @property
     def days_to_maturity(self):
@@ -86,6 +89,25 @@ class Product(db.Model):
             return False
         return date.today() >= self.start_date
 
+    @property
+    def next_payment(self):
+        """下一個還沒過配息日的 PaymentSchedule 列；都過了傳 None"""
+        today = date.today()
+        for s in sorted(self.payment_schedule, key=lambda x: x.period):
+            if s.payment_date and s.payment_date >= today:
+                return s
+        return None
+
+    @property
+    def paid_count(self):
+        """已過配息日的期數（payment_date < today）"""
+        today = date.today()
+        return sum(1 for s in self.payment_schedule if s.payment_date and s.payment_date < today)
+
+    @property
+    def total_periods(self):
+        return len(self.payment_schedule)
+
 
 class Underlying(db.Model):
     __tablename__ = 'underlyings'
@@ -102,6 +124,31 @@ class Underlying(db.Model):
     price_date     = db.Column(db.Date)
     position_order = db.Column(db.Integer)
     product        = db.relationship('Product', back_populates='underlyings')
+
+
+class PaymentSchedule(db.Model):
+    """配息排程表 — 記錄每期觀察起訖、配息日、是否已配"""
+    __tablename__ = 'payment_schedules'
+    id              = db.Column(db.Integer, primary_key=True)
+    product_id      = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
+    period          = db.Column(db.Integer, nullable=False)        # 1, 2, 3...
+    obs_start_date  = db.Column(db.Date)                           # 觀察期間起始日（含）
+    obs_end_date    = db.Column(db.Date)                           # 觀察期間結束日（含）
+    payment_date    = db.Column(db.Date, nullable=False)           # 配息給付日
+    paid            = db.Column(db.Boolean, default=False)         # 是否已配（自動：今天 > 配息日）
+    product         = db.relationship('Product', back_populates='payment_schedule')
+    __table_args__ = (db.UniqueConstraint('product_id', 'period'),)
+
+    @property
+    def status(self):
+        """已配 / 下次配息 / 未到 — 由 view 端使用"""
+        today = date.today()
+        if self.payment_date < today:
+            return 'paid'
+        elif self.payment_date == today:
+            return 'today'
+        else:
+            return 'future'
 
 
 class Position(db.Model):

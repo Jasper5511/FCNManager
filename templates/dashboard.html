@@ -50,6 +50,18 @@
             <span class="product-meta">{{ p.issuer or '' }}&nbsp;&nbsp;&nbsp;{{ p.tenor_months }}M&nbsp;&nbsp;&nbsp;{{ '{:.1%}'.format(p.coupon_rate) if p.coupon_rate else '' }}</span>
         </div>
         <div class="d-flex align-items-center gap-2">
+            {% if p.payment_schedule %}
+                {% set np = p.next_payment %}
+                {% if np %}
+                    <span class="badge" style="background:rgba(13,110,253,0.15); color:#0d6efd; border:1px solid rgba(13,110,253,0.4); font-weight:500;">
+                        下次配息 {{ np.payment_date.strftime('%m/%d') }} · {{ p.paid_count }}/{{ p.total_periods }}
+                    </span>
+                {% else %}
+                    <span class="badge" style="background:rgba(40,167,69,0.15); color:#28a745; border:1px solid rgba(40,167,69,0.4); font-weight:500;">
+                        全部配息完成 {{ p.total_periods }}/{{ p.total_periods }}
+                    </span>
+                {% endif %}
+            {% endif %}
             {% set d = p.days_to_maturity %}
             {% if d is not none %}
                 <span class="days-badge {{ 'danger' if d < 30 else 'warning' if d < 90 else 'ok' }}">

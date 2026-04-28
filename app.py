@@ -4,7 +4,7 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from functools import wraps
 from sqlalchemy.orm import joinedload
-from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog
+from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog, PaymentSchedule
 from config import config
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
@@ -1167,6 +1167,60 @@ def api_add_client():
     db.session.add(c)
     db.session.commit()
     return jsonify({'id': c.id, 'name': c.name_masked})
+
+
+# ── API：配息排程（PaymentSchedule）─────────────────────────────────────────
+@app.route('/api/products/<int:pid>/schedule', methods=['GET', 'POST', 'DELETE'])
+@login_required
+def api_schedule(pid):
+    p = Product.query.get_or_404(pid)
+    if p.user_id != current_uid() and not session.get('is_admin'):
+        return jsonify({'error': '無權限'}), 403
+
+    if request.method == 'GET':
+        return jsonify([{
+            'period': s.period,
+            'obs_start_date': s.obs_start_date.isoformat() if s.obs_start_date else None,
+            'obs_end_date': s.obs_end_date.isoformat() if s.obs_end_date else None,
+            'payment_date': s.payment_date.isoformat() if s.payment_date else None,
+            'paid': s.paid,
+        } for s in p.payment_schedule])
+
+    if request.method == 'DELETE':
+        for s in list(p.payment_schedule):
+            db.session.delete(s)
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    # POST：覆寫整份排程
+    data = request.get_json() or []
+    if not isinstance(data, list):
+        return jsonify({'error': 'expect JSON array'}), 400
+
+    # 先清除舊的
+    for s in list(p.payment_schedule):
+        db.session.delete(s)
+
+    def _parse(d):
+        if not d:
+            return None
+        try:
+            return datetime.strptime(d, '%Y-%m-%d').date()
+        except Exception:
+            return None
+
+    for item in data:
+        s = PaymentSchedule(
+            product_id     = pid,
+            period         = int(item.get('period')),
+            obs_start_date = _parse(item.get('obs_start_date')),
+            obs_end_date   = _parse(item.get('obs_end_date')),
+            payment_date   = _parse(item.get('payment_date')),
+            paid           = bool(item.get('paid', False)),
+        )
+        db.session.add(s)
+    db.session.commit()
+    return jsonify({'ok': True, 'count': len(data)})
 
 
 # ── 每日晨會快報 ─────────────────────────────────────────────────────────────

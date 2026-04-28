@@ -39,6 +39,56 @@
             </table>
         </div>
 
+        {% if product.payment_schedule %}
+        {% set today = today or product.start_date %}
+        {% set sched = product.payment_schedule|sort(attribute='period') %}
+        <div class="section-title d-flex justify-content-between align-items-center">
+            <span>配息排程</span>
+            <span style="font-size:0.85rem; font-weight:normal; color:var(--fcn-text-secondary);">
+                已配 <strong style="color:#28a745;">{{ product.paid_count }}</strong> / {{ product.total_periods }} 期
+                {% if product.next_payment %}
+                · 下次配息 <strong style="color:#0d6efd;">{{ product.next_payment.payment_date.strftime('%m/%d') }}</strong>
+                {% endif %}
+            </span>
+        </div>
+        <div class="card mb-3">
+            <div class="table-scroll">
+            <table class="table table-fcn mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center" style="width:60px;">期數</th>
+                        <th class="text-center">觀察期間起</th>
+                        <th class="text-center">觀察期間迄</th>
+                        <th class="text-center">配息給付日</th>
+                        <th class="text-center" style="width:100px;">狀態</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for s in sched %}
+                {% set is_paid = s.payment_date and s.payment_date < today %}
+                {% set is_next = product.next_payment and product.next_payment.id == s.id %}
+                <tr style="{% if is_next %}background:rgba(13,110,253,0.06);{% elif is_paid %}opacity:0.55;{% endif %}">
+                    <td class="text-center fw-bold">{{ s.period }}</td>
+                    <td class="text-center text-mono">{{ s.obs_start_date.strftime('%Y/%m/%d') if s.obs_start_date else '-' }}</td>
+                    <td class="text-center text-mono">{{ s.obs_end_date.strftime('%Y/%m/%d') if s.obs_end_date else '-' }}</td>
+                    <td class="text-center text-mono fw-bold">{{ s.payment_date.strftime('%Y/%m/%d') if s.payment_date else '-' }}</td>
+                    <td class="text-center">
+                        {% if is_paid %}
+                            <span class="badge bg-success">✓ 已配</span>
+                        {% elif is_next %}
+                            <span class="badge bg-primary">下次配息</span>
+                        {% else %}
+                            <span class="badge bg-light text-dark border">未到</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+        {% endif %}
+
         <div class="section-title">連結標的</div>
         <div class="card mb-3">
             <div class="table-scroll">
