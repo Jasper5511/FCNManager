@@ -174,6 +174,33 @@ def get_subscriber_count(app):
     return len(_load_subscribers(app))
 
 
+def get_real_follower_count(app):
+    """從 LINE 平台抓真實好友數（呼叫 get_followers_ids 分頁累計）。
+    抓失敗回傳 None，呼叫端可 fallback 到 get_subscriber_count。
+    """
+    if not _config:
+        return None
+    try:
+        with ApiClient(_config) as client:
+            api = MessagingApi(client)
+            count = 0
+            start = None
+            while True:
+                resp = api.get_followers_ids(start=start) if start \
+                    else api.get_followers_ids()
+                count += len(getattr(resp, 'user_ids', None) or [])
+                start = getattr(resp, 'next', None)
+                if not start:
+                    break
+            return count
+    except Exception as e:
+        try:
+            app.logger.error(f'取得 LINE 好友數失敗: {e}')
+        except Exception:
+            pass
+        return None
+
+
 # ── 持倉摘要 ─────────────────────────────────────────────────────────────────
 def _get_position_summary(app, line_user_id):
     """產生簡短的持倉文字摘要"""

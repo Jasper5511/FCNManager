@@ -1963,7 +1963,7 @@ def send_daily_report():
 @login_required
 @admin_required
 def line_settings():
-    from line_bot import is_configured, get_subscriber_count
+    from line_bot import is_configured, get_subscriber_count, get_real_follower_count
     env_path = os.path.join(os.path.dirname(__file__), '.env')
     if request.method == 'POST':
         secret = request.form.get('channel_secret', '').strip()
@@ -2005,7 +2005,10 @@ def line_settings():
     current_secret = os.environ.get('LINE_CHANNEL_SECRET', '')
     current_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
     configured = is_configured()
-    sub_count = get_subscriber_count(app) if configured else 0
+    sub_count = 0
+    if configured:
+        real = get_real_follower_count(app)
+        sub_count = real if real is not None else get_subscriber_count(app)
     return render_template('line_settings.html',
                            configured=configured,
                            current_secret=current_secret,
