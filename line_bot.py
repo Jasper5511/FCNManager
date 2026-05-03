@@ -62,10 +62,14 @@ def init_line(app):
             from daily_report import generate_market_report
             report = generate_market_report(app)
             reply = report
+        elif text in ('異動', '出場', '提醒'):
+            from daily_report import generate_settlement_alert
+            alert = generate_settlement_alert(app)
+            reply = alert if alert else '今日無商品異動'
         elif text in ('持倉', '部位'):
             reply = _get_position_summary(app, event.source.user_id)
         elif text == '幫助':
-            reply = '可用指令：\n- 日報：查看最新市場日報\n- 持倉：查看持倉摘要\n- 幫助：顯示此說明'
+            reply = '可用指令：\n- 日報：市場資訊\n- 異動：商品出場/接近KO/到期提醒\n- 持倉：持倉摘要\n- 幫助：顯示此說明'
         else:
             reply = f'輸入「幫助」查看可用指令'
 

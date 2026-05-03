@@ -4,7 +4,7 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 from functools import wraps
 from sqlalchemy.orm import joinedload
-from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog, PaymentSchedule
+from models import db, Client, Product, Underlying, Position, PriceHistory, AppUser, ActivityLog
 from config import config
 from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
@@ -80,10 +80,16 @@ def _setup_scheduler():
             if not is_configured():
                 return
             with app.app_context():
-                from daily_report import generate_market_report
+                from daily_report import generate_market_report, generate_settlement_alert
+                # 訊息 A：市場日報（純市場，每天發）
                 report = generate_market_report(app)
                 broadcast_text(report)
                 app.logger.info('每日市場日報已自動發送')
+                # 訊息 B：商品異動提醒（事件驅動，沒事不發）
+                alert = generate_settlement_alert(app)
+                if alert:
+                    broadcast_text(alert)
+                    app.logger.info('商品異動提醒已自動發送')
 
         def _scheduled_price_update():
             with app.app_context():
@@ -574,17 +580,17 @@ def export_excel():
     # Sheet 1: 持倉
     ws1 = wb.active
     ws1.title = '持倉'
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
     write_sheet(ws1, active)
 
     # Sheet 2: KO
     ws2 = wb.create_sheet('KO')
-    ko = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
+    ko = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at).all()
     write_sheet(ws2, ko, is_ko_sheet=True)
 
     # Sheet 3: 到期
     ws3 = wb.create_sheet('到期')
-    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
+    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at).all()
     write_sheet(ws3, matured)
 
     buf = BytesIO()
@@ -684,12 +690,13 @@ def dashboard():
     try:
         active = Product.query.filter_by(status='active', user_id=current_uid()) \
             .options(joinedload(Product.underlyings), joinedload(Product.positions).joinedload(Position.client)) \
-            .order_by(Product.trade_date, Product.created_at).all()
+            .order_by(Product.created_at).all()
     except Exception as e:
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
 
-    # 一般 FCN: start_date = 比價日 = KO 觀察起始日（含當日）
+    # 一般 FCN: 根據最新收盤價自動更新 KO 狀態
+    # start_date = 比價日 = KO 觀察起始日（含當日）
     today = date.today()
     ko_changed = False
     for p in active:
@@ -895,9 +902,9 @@ def delete_client(cid):
 @app.route('/products')
 @login_required
 def products():
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
-    ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.trade_date.desc(), Product.created_at.desc()).all()
-    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.trade_date.desc(), Product.created_at.desc()).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at.desc()).all()
+    matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at.desc()).all()
     # 計算持倉總金額（分幣別）
     from collections import defaultdict
     totals_by_currency = defaultdict(float)
@@ -1169,60 +1176,6 @@ def api_add_client():
     return jsonify({'id': c.id, 'name': c.name_masked})
 
 
-# ── API：配息排程（PaymentSchedule）─────────────────────────────────────────
-@app.route('/api/products/<int:pid>/schedule', methods=['GET', 'POST', 'DELETE'])
-@login_required
-def api_schedule(pid):
-    p = Product.query.get_or_404(pid)
-    if p.user_id != current_uid() and not session.get('is_admin'):
-        return jsonify({'error': '無權限'}), 403
-
-    if request.method == 'GET':
-        return jsonify([{
-            'period': s.period,
-            'obs_start_date': s.obs_start_date.isoformat() if s.obs_start_date else None,
-            'obs_end_date': s.obs_end_date.isoformat() if s.obs_end_date else None,
-            'payment_date': s.payment_date.isoformat() if s.payment_date else None,
-            'paid': s.paid,
-        } for s in p.payment_schedule])
-
-    if request.method == 'DELETE':
-        for s in list(p.payment_schedule):
-            db.session.delete(s)
-        db.session.commit()
-        return jsonify({'ok': True})
-
-    # POST：覆寫整份排程
-    data = request.get_json() or []
-    if not isinstance(data, list):
-        return jsonify({'error': 'expect JSON array'}), 400
-
-    # 先清除舊的
-    for s in list(p.payment_schedule):
-        db.session.delete(s)
-
-    def _parse(d):
-        if not d:
-            return None
-        try:
-            return datetime.strptime(d, '%Y-%m-%d').date()
-        except Exception:
-            return None
-
-    for item in data:
-        s = PaymentSchedule(
-            product_id     = pid,
-            period         = int(item.get('period')),
-            obs_start_date = _parse(item.get('obs_start_date')),
-            obs_end_date   = _parse(item.get('obs_end_date')),
-            payment_date   = _parse(item.get('payment_date')),
-            paid           = bool(item.get('paid', False)),
-        )
-        db.session.add(s)
-    db.session.commit()
-    return jsonify({'ok': True, 'count': len(data)})
-
-
 # ── 每日晨會快報 ─────────────────────────────────────────────────────────────
 @app.route('/briefing')
 @login_required
@@ -1231,7 +1184,7 @@ def briefing():
     today = date.today()
     uid = current_uid()
 
-    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.trade_date, Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
 
     # 即將到期（30天內）
     expiring = [p for p in active if p.maturity_date and p.days_to_maturity is not None and 0 <= p.days_to_maturity <= 30]
@@ -1628,7 +1581,7 @@ def debug_db():
     safe_uri = re.sub(r'://[^@]+@', '://***@', db_uri) if db_uri else 'NOT SET'
     uid = current_uid()
     # 跟 dashboard 完全一樣的查詢
-    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.trade_date, Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
     products_info = [{'id': p.id, 'code': p.product_code, 'user_id': p.user_id, 'status': p.status, 'created_at': str(p.created_at)} for p in active]
     # 也查不帶 order_by 的
     active2 = Product.query.filter_by(status='active', user_id=uid).all()
@@ -1965,25 +1918,41 @@ def activity_log():
 @app.route('/daily_report')
 @login_required
 def daily_report():
-    from daily_report import generate_market_report
+    from daily_report import generate_market_report, generate_settlement_alert
     from line_bot import is_configured
-    report = generate_market_report(app)
+    market = generate_market_report(app)
+    alert = generate_settlement_alert(app)
+    if alert:
+        report = market + '\n\n' + '─' * 30 + '\n\n' + alert
+    else:
+        report = market + '\n\n' + '─' * 30 + '\n\n（今日無商品異動，明早不會發送異動提醒）'
     return render_template('daily_report.html', report=report, configured=is_configured())
 
 
 @app.route('/daily_report/send', methods=['POST'])
 @login_required
 def send_daily_report():
-    from daily_report import generate_market_report
+    from daily_report import generate_market_report, generate_settlement_alert
     from line_bot import broadcast_text, is_configured, get_subscriber_count
     if not is_configured():
         flash('LINE Bot 尚未設定，請先設定 Channel Secret 和 Access Token', 'danger')
         return redirect(url_for('line_settings'))
-    report = generate_market_report(app)
-    success = broadcast_text(report)
+    # 訊息 A：市場日報
+    market = generate_market_report(app)
+    success = broadcast_text(market)
+    # 訊息 B：商品異動提醒（有事才發）
+    alert = generate_settlement_alert(app)
+    alert_sent = False
+    if alert:
+        alert_sent = bool(broadcast_text(alert))
     if success:
         count = get_subscriber_count(app)
-        flash(f'日報已透過 LINE 廣播發送（訂閱人數：{count}）', 'success')
+        msg = f'市場日報已發送（訂閱人數：{count}）'
+        if alert_sent:
+            msg += '；商品異動提醒已一併發送'
+        elif not alert:
+            msg += '；今日無商品異動'
+        flash(msg, 'success')
     else:
         flash('LINE 推播失敗，請檢查設定', 'danger')
     return redirect(url_for('daily_report'))
@@ -2043,6 +2012,442 @@ def line_settings():
                            current_token=current_token,
                            subscriber_count=sub_count)
 
+
+# ----------------------------------------------------------
+# 標的分析（admin only）
+# ----------------------------------------------------------
+
+@app.route('/analysis', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def analysis():
+    results = None
+    basket = None
+
+    if request.method == 'POST':
+        try:
+            from fcn_quant_engine import FCNQuantEngine
+
+            tickers_raw = request.form.get('tickers', '').strip().upper()
+            tickers = [t.strip() for t in tickers_raw.replace('，', ',').split(',') if t.strip()]
+            tenor = int(request.form.get('tenor', 6))
+            ki_pct = int(request.form.get('ki_pct', 70)) / 100.0
+            coupon = float(request.form.get('coupon', 12)) / 100.0
+            investment = float(request.form.get('investment', '100,000').replace(',', ''))
+
+            if not tickers:
+                flash('請輸入至少一個標的代碼', 'warning')
+                return render_template('analysis.html', results=None, basket=None)
+
+            engine = FCNQuantEngine()
+
+            if len(tickers) == 1:
+                r = engine.analyze(tickers[0], tenor_months=tenor, ki_pct=ki_pct, coupon_rate=coupon)
+                results = [r]
+            else:
+                basket = engine.analyze_basket(tickers, tenor_months=tenor, ki_pct=ki_pct)
+                results = list(basket['individual'].values())
+                # 補上 coupon 計算到每個結果
+                for r in results:
+                    r.coupon_rate = coupon
+                    r.total_coupon_pct = round(coupon / 12 * tenor * 100, 2)
+                    r.effective_cost_pct = round(r.ki_pct * (1 - coupon / 12 * tenor) * 100, 2)
+                    r.effective_cost_price = round(r.current_price * r.effective_cost_pct / 100, 2)
+                    r.breakeven_vs_current = round((1 - r.effective_cost_pct / 100) * 100, 2)
+
+            # --- 歷史情境模擬 ---
+            try:
+                import yfinance as yf
+                scenario_dates = [
+                    ('2020-02-19', 'COVID 崩盤前（2020/02）'),
+                    ('2022-01-03', '升息熊市前（2022/01）'),
+                    ('2024-07-10', 'AI 泡沫疑慮（2024/07）'),
+                ]
+                tenor_days = tenor * 30
+                for r in results:
+                    scenarios = []
+                    try:
+                        stock = yf.Ticker(r.ticker)
+                        for date_str, label in scenario_dates:
+                            try:
+                                start_dt = datetime.strptime(date_str, '%Y-%m-%d')
+                                end_dt = start_dt + timedelta(days=tenor_days)
+                                hist = stock.history(start=date_str, end=end_dt.strftime('%Y-%m-%d'))
+                                if hist.empty or len(hist) < 5:
+                                    continue
+                                initial_price = round(float(hist['Close'].iloc[0]), 2)
+                                min_price = round(float(hist['Low'].min()), 2)
+                                max_drop_pct = round((min_price - initial_price) / initial_price * 100, 1)
+                                ki_level = initial_price * ki_pct  # 執行價
+                                hit_ki = min_price <= ki_level
+                                scenario = {
+                                    'label': label,
+                                    'initial_price': initial_price,
+                                    'min_price': min_price,
+                                    'max_drop_pct': max_drop_pct,
+                                    'ki_level': round(ki_level, 2),
+                                    'hit_ki': hit_ki,
+                                }
+                                if hit_ki:
+                                    # 接股價 = KI 價
+                                    pickup_price = round(ki_level, 2)
+                                    total_coupon_frac = coupon / 12 * tenor
+                                    effective_cost = round(pickup_price * (1 - total_coupon_frac), 2)
+                                    # 目前價格（最後一筆收盤價）
+                                    latest = stock.history(period='1d')
+                                    current_now = round(float(latest['Close'].iloc[-1]), 2) if not latest.empty else 0
+                                    recovery_pct = round((current_now - effective_cost) / effective_cost * 100, 1) if effective_cost > 0 else 0
+                                    scenario['pickup_price'] = pickup_price
+                                    scenario['effective_cost'] = effective_cost
+                                    scenario['current_now'] = current_now
+                                    scenario['recovery_pct'] = recovery_pct
+                                scenarios.append(scenario)
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    r.scenarios = scenarios
+            except Exception:
+                for r in results:
+                    r.scenarios = []
+
+            # --- 信心分級（基於 2026-04-14 50 檔回測 Brier）---
+            try:
+                from ticker_confidence import get_confidence, worst_tier
+                for r in results:
+                    tier, label, note, brier = get_confidence(r.ticker)
+                    r.confidence_tier = tier
+                    r.confidence_label = label
+                    r.confidence_note = note
+                    r.confidence_brier = brier
+                if basket is not None:
+                    wt, wt_list = worst_tier(tickers)
+                    basket['confidence_tier'] = wt
+                    basket['confidence_worst_tickers'] = wt_list
+            except Exception:
+                for r in results:
+                    r.confidence_tier = 'unknown'
+                    r.confidence_label = '未知'
+                    r.confidence_note = ''
+                    r.confidence_brier = None
+
+            log_activity(f'標的分析：{",".join(tickers)} {tenor}M KI{int(ki_pct*100)}%')
+
+        except Exception as e:
+            flash(f'分析錯誤：{str(e)}', 'danger')
+
+    return render_template('analysis.html', results=results, basket=basket)
+
+
+# ----------------------------------------------------------
+# 對沖成本計算器（admin only）
+# ----------------------------------------------------------
+
+@app.route('/hedge', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def hedge():
+    result = None
+
+    if request.method == 'POST':
+        try:
+            import yfinance as yf
+            from datetime import datetime, timedelta
+
+            ticker_raw = request.form.get('ticker', '').strip().upper()
+            # 支援多檔（逗號分隔）
+            tickers = [t.strip() for t in ticker_raw.replace('，', ',').split(',') if t.strip()]
+            tenor_months = int(request.form.get('tenor', 6))
+            ki_pct_int = int(request.form.get('ki_pct', 70))
+            ki_pct = ki_pct_int / 100.0
+            coupon_rate = float(request.form.get('coupon', 12))
+            investment = float(request.form.get('investment', '100,000').replace(',', ''))
+
+            if not tickers:
+                flash('請輸入標的代碼', 'warning')
+                return render_template('hedge.html', result=None)
+
+            rf_rate = 4.5  # 無風險利率（年化）
+            rf_tenor = round(rf_rate / 12 * tenor_months, 2)
+            total_coupon_pct = round(coupon_rate / 12 * tenor_months, 2)
+            coupon_income = round(investment * total_coupon_pct / 100, 0)
+
+            # 每檔標的個別計算風險成本
+            per_stock = []
+            failed = []
+
+            for tk in tickers:
+                try:
+                    stock = yf.Ticker(tk)
+                    info = stock.info or {}
+                    cp = float(info.get('currentPrice', 0) or info.get('regularMarketPrice', 0))
+                    if cp <= 0:
+                        failed.append(f'{tk}（無股價）')
+                        continue
+
+                    cn = info.get('shortName', tk)
+                    kp = round(cp * ki_pct, 2)
+
+                    exp_dates = stock.options
+                    if not exp_dates:
+                        failed.append(f'{tk}（無選擇權資料）')
+                        continue
+
+                    target_date = datetime.now() + timedelta(days=tenor_months * 30)
+                    best_exp = min(exp_dates, key=lambda d: abs((datetime.strptime(d, '%Y-%m-%d') - target_date).days))
+
+                    chain = stock.option_chain(best_exp)
+                    puts = chain.puts
+                    puts_valid = puts[puts['lastPrice'] > 0].copy()
+
+                    if puts_valid.empty:
+                        failed.append(f'{tk}（選擇權無報價）')
+                        continue
+
+                    # 找最接近 KI 價的 Put
+                    ki_puts = puts_valid.iloc[(puts_valid['strike'] - kp).abs().argsort()[:1]]
+                    if ki_puts.empty:
+                        failed.append(f'{tk}（找不到對應 strike）')
+                        continue
+
+                    put_price = float(ki_puts.iloc[0]['lastPrice'])
+                    put_strike = float(ki_puts.iloc[0]['strike'])
+                    cost_pct = round(put_price / cp * 100, 2)
+
+                    per_stock.append({
+                        'ticker': tk,
+                        'company_name': cn,
+                        'current_price': cp,
+                        'ki_price': kp,
+                        'put_strike': put_strike,
+                        'put_price': put_price,
+                        'cost_pct': cost_pct,
+                        'option_expiry': best_exp,
+                    })
+                except Exception as e:
+                    failed.append(f'{tk}（錯誤：{str(e)[:30]}）')
+
+            if not per_stock:
+                result = {
+                    'ticker': ticker_raw,
+                    'company_name': '',
+                    'is_basket': len(tickers) > 1,
+                    'tickers': tickers,
+                    'current_price': 0, 'ki_pct': ki_pct_int, 'ki_price': 0,
+                    'tenor_months': tenor_months,
+                    'coupon_rate': coupon_rate, 'total_coupon_pct': total_coupon_pct,
+                    'investment': investment, 'coupon_income': coupon_income,
+                    'option_expiry': '-', 'strategies': None,
+                    'error_msg': f'無法取得風險成本：{", ".join(failed)}',
+                    'conclusion': '', 'client_talk': '',
+                }
+                return render_template('hedge.html', result=result)
+
+            is_basket = len(per_stock) > 1
+
+            # === 單檔模式 ===
+            if not is_basket:
+                ps = per_stock[0]
+                cp = ps['current_price']
+                kp = ps['ki_price']
+                put_strike = ps['put_strike']
+                put_price = ps['put_price']
+                shares = investment / cp
+
+                strategies = []
+
+                # 完全消除風險
+                cost_pct = round(put_price / cp * 100, 2)
+                cost_dollar = round(shares * put_price, 0)
+                strategies.append({
+                    'name': f'完全消除風險的市場成本（Put ${put_strike:.0f}）',
+                    'description': f'消除股價跌破 ${put_strike:.0f} 的全部風險，市場報價 ${put_price:.2f}/股',
+                    'cost_pct': cost_pct,
+                    'cost_dollar': cost_dollar,
+                    'net_yield': round(total_coupon_pct - cost_pct, 2),
+                    'net_income': round(coupon_income - cost_dollar, 0),
+                    'recommended': True,
+                })
+
+                # Put Spread
+                try:
+                    stock = yf.Ticker(ps['ticker'])
+                    chain = stock.option_chain(ps['option_expiry'])
+                    puts_valid = chain.puts[chain.puts['lastPrice'] > 0].copy()
+                    deeper_target = cp * (ki_pct - 0.10)
+                    deeper_puts = puts_valid.iloc[(puts_valid['strike'] - deeper_target).abs().argsort()[:1]]
+                    if not deeper_puts.empty:
+                        sell_price = float(deeper_puts.iloc[0]['lastPrice'])
+                        sell_strike = float(deeper_puts.iloc[0]['strike'])
+                        net_cost = max(put_price - sell_price, 0.01)
+                        cost_pct = round(net_cost / cp * 100, 2)
+                        cost_dollar = round(shares * net_cost, 0)
+                        strategies.append({
+                            'name': f'部分保護的市場成本（${put_strike:.0f} / ${sell_strike:.0f}）',
+                            'description': f'保護 ${put_strike:.0f} 到 ${sell_strike:.0f} 區間的風險',
+                            'cost_pct': cost_pct,
+                            'cost_dollar': cost_dollar,
+                            'net_yield': round(total_coupon_pct - cost_pct, 2),
+                            'net_income': round(coupon_income - cost_dollar, 0),
+                            'recommended': False,
+                        })
+
+                    disaster_target = cp * 0.55
+                    disaster_puts = puts_valid.iloc[(puts_valid['strike'] - disaster_target).abs().argsort()[:1]]
+                    if not disaster_puts.empty:
+                        dis_price = float(disaster_puts.iloc[0]['lastPrice'])
+                        dis_strike = float(disaster_puts.iloc[0]['strike'])
+                        cost_pct = round(dis_price / cp * 100, 2)
+                        cost_dollar = round(shares * dis_price, 0)
+                        strategies.append({
+                            'name': f'防大崩盤的市場成本（Put ${dis_strike:.0f}）',
+                            'description': f'只衡量股價跌破 ${dis_strike:.0f}（腰斬級）的極端風險',
+                            'cost_pct': cost_pct,
+                            'cost_dollar': cost_dollar,
+                            'net_yield': round(total_coupon_pct - cost_pct, 2),
+                            'net_income': round(coupon_income - cost_dollar, 0),
+                            'recommended': False,
+                        })
+                except Exception:
+                    pass
+
+                risk_premium_pct = strategies[0]['cost_pct']
+                risk_premium_annual = round(risk_premium_pct / tenor_months * 12, 1)
+                alpha_tenor = round(total_coupon_pct - rf_tenor - risk_premium_pct, 2)
+                alpha_annual = round(alpha_tenor / tenor_months * 12, 1)
+                rp_ratio = round(risk_premium_pct / total_coupon_pct * 100, 0) if total_coupon_pct > 0 else 0
+
+                conclusion = (f"這檔 FCN 的風險溢價約 {risk_premium_pct:.2f}%（年化約 {risk_premium_annual:.1f}%）。"
+                              f"票息 {coupon_rate:.1f}% 中，扣除無風險利率 {rf_rate}% 和風險溢價 {risk_premium_annual:.1f}%，"
+                              f"客戶實際多賺的 Alpha 約 {alpha_annual:.1f}%。")
+                if rp_ratio > 50:
+                    conclusion += f" 風險溢價偏高（佔票息 {rp_ratio:.0f}%），建議審慎評估。"
+                elif alpha_annual > 0:
+                    conclusion += f" 風險溢價合理（佔票息 {rp_ratio:.0f}%），承擔風險後仍有正向 Alpha。"
+                else:
+                    conclusion += f" Alpha 為負，票息不足以補償風險，建議考慮其他條件。"
+
+                client_talk = (f"這檔商品年化配息 {coupon_rate:.1f}%，比定存高出不少。"
+                               f"其中約 {risk_premium_annual:.1f}% 是因為您承擔了股價跌破 {ki_pct_int}% 的風險。"
+                               f"扣掉這部分，您還是比無風險利率多賺約 {max(alpha_annual, 0):.1f}%。")
+
+                result = {
+                    'ticker': ps['ticker'],
+                    'company_name': ps['company_name'],
+                    'is_basket': False,
+                    'tickers': tickers,
+                    'per_stock': per_stock,
+                    'current_price': cp,
+                    'ki_pct': ki_pct_int,
+                    'ki_price': kp,
+                    'tenor_months': tenor_months,
+                    'coupon_rate': coupon_rate,
+                    'total_coupon_pct': total_coupon_pct,
+                    'investment': investment,
+                    'coupon_income': coupon_income,
+                    'option_expiry': ps['option_expiry'],
+                    'strategies': strategies,
+                    'conclusion': conclusion,
+                    'client_talk': client_talk,
+                    'error_msg': '',
+                }
+
+            # === 籃子模式（Worst-of）===
+            else:
+                # Worst-of 風險 ≈ 各股 Put 成本加總 × 相關性折扣
+                # 實務上因為任一檔觸及就算 KI，風險通常高於單一股
+                # 保守估計：總和 × 0.85（假設有一定相關性分散）
+                total_cost_pct = sum(p['cost_pct'] for p in per_stock)
+                basket_risk_pct = round(total_cost_pct * 0.85, 2)  # Worst-of 折扣
+
+                # 找風險最高的股
+                worst_stock = max(per_stock, key=lambda x: x['cost_pct'])
+
+                shares_equiv = investment / worst_stock['current_price']
+
+                strategies = []
+                strategies.append({
+                    'name': f'完全消除籃子風險的市場成本（{len(per_stock)} 檔 Worst-of）',
+                    'description': (f'Worst-of 結構：任一檔跌破執行價即觸發。'
+                                    f'消除全部風險需對每一檔都買 Put，加總 {total_cost_pct:.2f}%，'
+                                    f'考慮相關性折扣後約 {basket_risk_pct:.2f}%'),
+                    'cost_pct': basket_risk_pct,
+                    'cost_dollar': round(investment * basket_risk_pct / 100, 0),
+                    'net_yield': round(total_coupon_pct - basket_risk_pct, 2),
+                    'net_income': round(coupon_income - investment * basket_risk_pct / 100, 0),
+                    'recommended': True,
+                })
+
+                # 只保護最危險的那檔
+                worst_cost = worst_stock['cost_pct']
+                strategies.append({
+                    'name': f'只保護最危險的 {worst_stock["ticker"]}（Put ${worst_stock["put_strike"]:.0f}）',
+                    'description': f'{worst_stock["ticker"]} 風險成本最高（{worst_cost:.2f}%），先消除這個',
+                    'cost_pct': worst_cost,
+                    'cost_dollar': round(investment * worst_cost / 100, 0),
+                    'net_yield': round(total_coupon_pct - worst_cost, 2),
+                    'net_income': round(coupon_income - investment * worst_cost / 100, 0),
+                    'recommended': False,
+                })
+
+                # Alpha 計算
+                risk_premium_pct = basket_risk_pct
+                risk_premium_annual = round(risk_premium_pct / tenor_months * 12, 1)
+                alpha_tenor = round(total_coupon_pct - rf_tenor - risk_premium_pct, 2)
+                alpha_annual = round(alpha_tenor / tenor_months * 12, 1)
+                rp_ratio = round(risk_premium_pct / total_coupon_pct * 100, 0) if total_coupon_pct > 0 else 0
+
+                conclusion = (f"這檔 Worst-of 籃子 FCN（{len(per_stock)} 檔）的風險溢價約 {risk_premium_pct:.2f}%"
+                              f"（年化約 {risk_premium_annual:.1f}%）。各檔個別風險加總 {total_cost_pct:.2f}%，"
+                              f"考慮相關性折扣後約 {basket_risk_pct:.2f}%。")
+                conclusion += (f" 風險最高的是 {worst_stock['ticker']}（{worst_cost:.2f}%）。"
+                               f"票息 {coupon_rate:.1f}% 中，扣除無風險利率和風險溢價後 "
+                               f"Alpha 約 {alpha_annual:.1f}%。")
+
+                if rp_ratio > 70:
+                    conclusion += f" 風險溢價極高（佔票息 {rp_ratio:.0f}%），建議減少標的數或提高票息。"
+                elif rp_ratio > 50:
+                    conclusion += f" 風險溢價偏高（佔票息 {rp_ratio:.0f}%），建議審慎評估。"
+                elif alpha_annual > 0:
+                    conclusion += f" 風險溢價合理（佔票息 {rp_ratio:.0f}%）。"
+                else:
+                    conclusion += f" Alpha 為負，票息不足以補償這個籃子的風險。"
+
+                client_talk = (f"這組 {len(per_stock)} 檔的籃子商品，任一檔跌破 {ki_pct_int}% 都會觸發。"
+                               f"因為要承擔多檔的風險，年化 {coupon_rate:.1f}% 的配息裡有約 "
+                               f"{risk_premium_annual:.1f}% 是承擔風險的報酬。"
+                               f"扣掉這部分和定存利率，您實際多賺約 {max(alpha_annual, 0):.1f}%。"
+                               f"其中最大的風險來自 {worst_stock['ticker']}。")
+
+                # 基本資訊取第一檔的到期日
+                result = {
+                    'ticker': ticker_raw,
+                    'company_name': f'{len(per_stock)} 檔 Worst-of 籃子',
+                    'is_basket': True,
+                    'tickers': tickers,
+                    'per_stock': per_stock,
+                    'worst_stock': worst_stock['ticker'],
+                    'current_price': 0,  # 籃子沒有單一現價
+                    'ki_pct': ki_pct_int,
+                    'ki_price': 0,
+                    'tenor_months': tenor_months,
+                    'coupon_rate': coupon_rate,
+                    'total_coupon_pct': total_coupon_pct,
+                    'investment': investment,
+                    'coupon_income': coupon_income,
+                    'option_expiry': per_stock[0]['option_expiry'],
+                    'strategies': strategies,
+                    'conclusion': conclusion,
+                    'client_talk': client_talk,
+                    'error_msg': '',
+                }
+
+            log_activity(f'風險成本分析：{ticker_raw} {tenor_months}M KI{ki_pct_int}% 票息{coupon_rate}%')
+
+        except Exception as e:
+            flash(f'計算錯誤：{str(e)}', 'danger')
+
+    return render_template('hedge.html', result=result)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
