@@ -1461,13 +1461,13 @@ def _make_single_product_pdf(pos, today, font_path):
             _display = f'{ticker_symbol} {ticker_name}' if ticker_name else ticker_symbol
             ax1.plot(close.index, close.values, color='#e74c3c', linewidth=2.5, label=_display)
             if ko_level:
-                ax1.axhline(y=ko_level, color='#e74c3c', linestyle='--', linewidth=1.5, label=f'期初價格({ko_level:,.2f})')
+                ax1.axhline(y=ko_level, color='#e74c3c', linestyle='--', linewidth=1.5, label=f'期初價格({ko_level:,.4f})')
             if strike_level:
-                strike_pct_label = f'{strike_pct:.0%}' if strike_pct else ''
-                ax1.axhline(y=strike_level, color='#e67e22', linestyle='--', linewidth=1.5, label=f'執行價{strike_pct_label}({strike_level:,.2f})')
+                strike_pct_label = f'{strike_pct:.2%}' if strike_pct else ''
+                ax1.axhline(y=strike_level, color='#e67e22', linestyle='--', linewidth=1.5, label=f'執行價{strike_pct_label}({strike_level:,.4f})')
             if eki_level:
                 eki_pct_label = f'{eki_pct:.0%}' if eki_pct else ''
-                ax1.axhline(y=eki_level, color='#8e44ad', linestyle='--', linewidth=1.5, label=f'觸及生效價{eki_pct_label}({eki_level:,.2f})')
+                ax1.axhline(y=eki_level, color='#8e44ad', linestyle='--', linewidth=1.5, label=f'觸及生效價{eki_pct_label}({eki_level:,.4f})')
             last_price = close.iloc[-1]
             ax1.annotate(f'{last_price:.2f}', xy=(close.index[-1], last_price),
                         fontsize=10, fontweight='bold', color='#e74c3c',
@@ -1523,7 +1523,7 @@ def _make_single_product_pdf(pos, today, font_path):
     # 標的表格
     pdf.set_font('chinese', '', 9)
     pdf.set_fill_color(220, 220, 220)
-    strike_pct_str = f'({p.strike_pct:.0%})' if p.strike_pct else ''
+    strike_pct_str = f'({p.strike_pct:.2%})' if p.strike_pct else ''
     # 最新價日期
     price_date_str = ''
     for u in uls:
@@ -1548,19 +1548,19 @@ def _make_single_product_pdf(pos, today, font_path):
         if has_eki:
             vals = [
                 ticker_display,
-                f'{u.initial_price:,.2f}' if u.initial_price else '-',
-                f'{u.ko_level:,.2f}' if u.ko_level else '-',
-                f'{u.strike_level:,.2f}' if u.strike_level else '-',
-                f'{u.eki_level:,.2f}' if u.eki_level else '-',
+                f'{u.initial_price:,.4f}' if u.initial_price else '-',
+                f'{u.ko_level:,.4f}' if u.ko_level else '-',
+                f'{u.strike_level:,.4f}' if u.strike_level else '-',
+                f'{u.eki_level:,.4f}' if u.eki_level else '-',
                 f'{u.latest_price:,.2f}' if u.latest_price else '-',
                 'V' if u.ko_hit else '',
             ]
         else:
             vals = [
                 ticker_display,
-                f'{u.initial_price:,.2f}' if u.initial_price else '-',
-                f'{u.ko_level:,.2f}' if u.ko_level else '-',
-                f'{u.strike_level:,.2f}' if u.strike_level else '-',
+                f'{u.initial_price:,.4f}' if u.initial_price else '-',
+                f'{u.ko_level:,.4f}' if u.ko_level else '-',
+                f'{u.strike_level:,.4f}' if u.strike_level else '-',
                 f'{u.latest_price:,.2f}' if u.latest_price else '-',
                 'V' if u.ko_hit else '',
             ]
@@ -1569,6 +1569,59 @@ def _make_single_product_pdf(pos, today, font_path):
         pdf.ln()
 
     pdf.ln(2)
+
+    # ── 配息排程表（第一頁紅框區）──
+    sched = sorted(p.payment_schedule, key=lambda s: s.period) if p.payment_schedule else []
+    if sched:
+        np_obj = p.next_payment
+        pdf.set_font('chinese', '', 11)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 8, f'配息排程（已配 {p.paid_count} / 共 {len(sched)} 期）',
+                 new_x='LMARGIN', new_y='NEXT')
+        cw = [16, 44, 44, 28]          # 期數 / 觀察期間結束日 / 配息日 / 狀態
+        grp_w = sum(cw)
+        gap = 10
+        sub_headers = ['期數', '觀察期間結束日', '配息日', '狀態']
+        x0 = pdf.l_margin
+        y0 = pdf.get_y()
+        # 表頭（左右兩組）
+        pdf.set_font('chinese', '', 8)
+        for gi in range(2):
+            pdf.set_xy(x0 + gi * (grp_w + gap), y0)
+            pdf.set_fill_color(210, 210, 210)
+            pdf.set_text_color(0, 0, 0)
+            for i, h in enumerate(sub_headers):
+                pdf.cell(cw[i], 6, h, border=1, fill=True, align='C')
+        # 資料列：分左右兩欄
+        n = len(sched)
+        half = (n + 1) // 2
+        groups = [sched[:half], sched[half:]]
+        for r in range(half):
+            for gi, grp in enumerate(groups):
+                if r >= len(grp):
+                    continue
+                s = grp[r]
+                pdf.set_xy(x0 + gi * (grp_w + gap), y0 + 6 + r * 6)
+                if s.payment_date and s.payment_date < today:
+                    pdf.set_fill_color(235, 235, 235)
+                    pdf.set_text_color(135, 135, 135)
+                    st_txt = '已配息'
+                elif np_obj and s.id == np_obj.id:
+                    pdf.set_fill_color(13, 110, 253)
+                    pdf.set_text_color(255, 255, 255)
+                    st_txt = '下次配息'
+                else:
+                    pdf.set_fill_color(255, 255, 255)
+                    pdf.set_text_color(0, 0, 0)
+                    st_txt = '未到'
+                obs_end = s.obs_end_date.strftime('%Y/%m/%d') if s.obs_end_date else '-'
+                pay = s.payment_date.strftime('%Y/%m/%d') if s.payment_date else '-'
+                pdf.cell(cw[0], 6, str(s.period), border=1, fill=True, align='C')
+                pdf.cell(cw[1], 6, obs_end, border=1, fill=True, align='C')
+                pdf.cell(cw[2], 6, pay, border=1, fill=True, align='C')
+                pdf.cell(cw[3], 6, st_txt, border=1, fill=True, align='C')
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_y(y0 + 6 + half * 6 + 4)
 
     # 線圖（兩張並排）
     chart_paths = []
