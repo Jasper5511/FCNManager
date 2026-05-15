@@ -43,7 +43,6 @@ with app.app_context():
             ('ko_start_pct', 'FLOAT'),
             ('ko_stepdown_pct', 'FLOAT'),
             ('observation_dates', 'TEXT'),
-            ('ko_observe_start', 'DATE'),
         ]:
             if col_name not in prod_cols:
                 conn.execute(text(f'ALTER TABLE products ADD COLUMN {col_name} {col_def}'))
@@ -66,24 +65,102 @@ with app.app_context():
                     pass
             app.logger.info('已修正 PostgreSQL ID 序列')
 
-# 一次性修正：2026SN2301 比價日 ≠ KO 觀察起始日（每日觀察 + 閉鎖期到 6/15）
+# 一次性資料修正：統一 2026 年 active 商品的 special_notes（發行日｜到期日｜ISIN）、
+# 修正 2026SN2301 比價日 = 2026-06-15、補建 2026SN2301 配息排程（套用完成後可移除此區塊）
 with app.app_context():
     try:
         from datetime import date as _date
-        for _p in Product.query.filter_by(product_code='2026SN2301').all():
-            patched = False
-            if not _p.ko_observe_start:
-                _p.ko_observe_start = _date(2026, 6, 15)
-                patched = True
-            if patched:
-                for _u in _p.underlyings:
-                    _u.ko_hit = False
-                    _u.ko_hit_date = None
-                db.session.commit()
-                app.logger.info(f'已修正 2026SN2301 ko_observe_start + 清除錯標 KO (pid={_p.id})')
+        from models import PaymentSchedule
+        _UNIFY = {
+            '2026SN1891': ('發行日 2026-04-30｜到期日 2026-11-03｜ISIN XS3342478644', None),
+            '2026SN1495': ('發行日 2026-04-22｜到期日 2027-01-27｜ISIN XS3263839709', None),
+            '2026SN1415': ('發行日 2026-04-20｜到期日 2026-09-24｜ISIN XS3326009233', None),
+            '2026SN2301': ('發行日 2026-05-15｜到期日 2027-05-19｜ISIN XS3365601874', _date(2026, 6, 15)),
+        }
+        _changed = False
+        for _code, (_notes, _sd) in _UNIFY.items():
+            for _p in Product.query.filter_by(product_code=_code).all():
+                if _p.special_notes != _notes:
+                    _p.special_notes = _notes
+                    _changed = True
+                if _sd and _p.start_date != _sd:
+                    _p.start_date = _sd
+                    _changed = True
+        # 補建配息排程（照 TS 表A）— code: [(period, obs_start, obs_end, payment_date), ...]
+        _SCHEDULES = {
+            '2026SN2301': [
+                (1,  '2026-05-11', '2026-06-15', '2026-06-17'),
+                (2,  '2026-06-16', '2026-07-15', '2026-07-17'),
+                (3,  '2026-07-16', '2026-08-17', '2026-08-19'),
+                (4,  '2026-08-18', '2026-09-15', '2026-09-17'),
+                (5,  '2026-09-16', '2026-10-15', '2026-10-19'),
+                (6,  '2026-10-16', '2026-11-16', '2026-11-18'),
+                (7,  '2026-11-17', '2026-12-15', '2026-12-17'),
+                (8,  '2026-12-16', '2027-01-15', '2027-01-20'),
+                (9,  '2027-01-16', '2027-02-16', '2027-02-18'),
+                (10, '2027-02-17', '2027-03-15', '2027-03-17'),
+                (11, '2027-03-16', '2027-04-15', '2027-04-19'),
+                (12, '2027-04-16', '2027-05-17', '2027-05-19'),
+            ],
+            '2026SN2155': [
+                (1, '2026-05-06', '2026-06-12', '2026-06-16'),
+                (2, '2026-06-13', '2026-07-13', '2026-07-15'),
+                (3, '2026-07-14', '2026-08-12', '2026-08-14'),
+                (4, '2026-08-13', '2026-09-14', '2026-09-16'),
+                (5, '2026-09-15', '2026-10-12', '2026-10-14'),
+                (6, '2026-10-13', '2026-11-12', '2026-11-16'),
+                (7, '2026-11-13', '2026-12-14', '2026-12-16'),
+                (8, '2026-12-15', '2027-01-12', '2027-01-14'),
+            ],
+            '2026SN2417': [
+                (1,  '2026-05-13', '2026-06-22', '2026-06-24'),
+                (2,  '2026-06-23', '2026-07-20', '2026-07-22'),
+                (3,  '2026-07-21', '2026-08-19', '2026-08-21'),
+                (4,  '2026-08-20', '2026-09-21', '2026-09-23'),
+                (5,  '2026-09-22', '2026-10-19', '2026-10-21'),
+                (6,  '2026-10-20', '2026-11-19', '2026-11-23'),
+                (7,  '2026-11-20', '2026-12-21', '2026-12-23'),
+                (8,  '2026-12-22', '2027-01-19', '2027-01-21'),
+                (9,  '2027-01-20', '2027-02-19', '2027-02-23'),
+                (10, '2027-02-20', '2027-03-19', '2027-03-23'),
+                (11, '2027-03-20', '2027-04-19', '2027-04-21'),
+                (12, '2027-04-20', '2027-05-19', '2027-05-21'),
+            ],
+            '2026SN1650': [
+                (1, '2026-04-20', '2026-05-26', '2026-05-28'),
+                (2, '2026-05-27', '2026-06-24', '2026-06-26'),
+                (3, '2026-06-25', '2026-07-24', '2026-07-28'),
+                (4, '2026-07-25', '2026-08-24', '2026-08-26'),
+                (5, '2026-08-25', '2026-09-24', '2026-09-28'),
+                (6, '2026-09-25', '2026-10-26', '2026-10-28'),
+                (7, '2026-10-27', '2026-11-24', '2026-11-27'),
+                (8, '2026-11-25', '2026-12-24', '2026-12-29'),
+            ],
+            '2026SN1938': [
+                (1, '2026-05-07', '2026-06-08', '2026-06-11'),
+                (2, '2026-06-09', '2026-07-07', '2026-07-10'),
+                (3, '2026-07-08', '2026-08-07', '2026-08-12'),
+                (4, '2026-08-10', '2026-09-08', '2026-09-11'),
+                (5, '2026-09-09', '2026-10-07', '2026-10-13'),
+                (6, '2026-10-08', '2026-11-09', '2026-11-13'),
+            ],
+        }
+        for _code, _sched in _SCHEDULES.items():
+            for _p in Product.query.filter_by(product_code=_code).all():
+                if not _p.payment_schedule:
+                    for _per, _os, _oe, _pd in _sched:
+                        db.session.add(PaymentSchedule(
+                            product_id=_p.id, period=_per,
+                            obs_start_date=_date.fromisoformat(_os),
+                            obs_end_date=_date.fromisoformat(_oe),
+                            payment_date=_date.fromisoformat(_pd)))
+                    _changed = True
+        if _changed:
+            db.session.commit()
+            app.logger.info('已套用 2026 商品資料統一修正')
     except Exception as _e:
         db.session.rollback()
-        app.logger.warning(f'修正 2026SN2301 失敗: {_e}')
+        app.logger.warning(f'2026 商品資料統一修正失敗: {_e}')
 
 # ── 初始化 LINE Bot ──────────────────────────────────────────────────────────
 from line_bot import init_line, is_configured as line_is_configured
@@ -164,9 +241,9 @@ def _setup_scheduler():
                                                 u.ko_hit_date = obs_d
                                                 app.logger.info(f'[排程] Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1}')
                                             break
-                                    # ── 一般 FCN: 以 ko_obs_start 為 KO 觀察起點（預設=start_date）──
-                                    elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.ko_obs_start:
-                                        if today >= p.ko_obs_start:
+                                    # ── 一般 FCN: start_date = 比價日 = KO 觀察起始日 ──
+                                    elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
+                                        if today >= p.start_date:
                                             if u.latest_price >= u.ko_level:
                                                 u.ko_hit = True
                                 except Exception:
@@ -600,7 +677,7 @@ def export_excel():
     # Sheet 1: 持倉
     ws1 = wb.active
     ws1.title = '持倉'
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
     write_sheet(ws1, active)
 
     # Sheet 2: KO
@@ -683,9 +760,9 @@ def _maybe_bg_update(uid, active):
                             if u.ticker in prices:
                                 u.latest_price = prices[u.ticker]
                                 u.price_date = price_date
-                            # 一般 FCN: 以 ko_obs_start 為 KO 觀察起點
-                            if p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.ko_obs_start:
-                                if today >= p.ko_obs_start:
+                            # 一般 FCN: start_date = 比價日 = KO 觀察起始日
+                            if p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
+                                if today >= p.start_date:
                                     if u.latest_price >= u.ko_level:
                                         u.ko_hit = True
                         except Exception:
@@ -710,17 +787,17 @@ def dashboard():
     try:
         active = Product.query.filter_by(status='active', user_id=current_uid()) \
             .options(joinedload(Product.underlyings), joinedload(Product.positions).joinedload(Position.client)) \
-            .order_by(Product.created_at).all()
+            .order_by(Product.trade_date, Product.created_at).all()
     except Exception as e:
         app.logger.error(f'Dashboard query error: {e}')
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
 
     # 一般 FCN: 根據最新收盤價自動更新 KO 狀態
-    # 以 ko_obs_start 為 KO 觀察起點（預設=start_date 比價日）
+    # start_date = 比價日 = KO 觀察起始日（含當日）
     today = date.today()
     ko_changed = False
     for p in active:
-        if p.ko_type != 'stepdown' and p.ko_obs_start and today >= p.ko_obs_start:
+        if p.ko_type != 'stepdown' and p.start_date and today >= p.start_date:
             for u in p.underlyings:
                 if u.ko_level and u.latest_price and not u.ko_hit:
                     if u.latest_price >= u.ko_level:
@@ -842,9 +919,9 @@ def fetch_prices():
                                     app.logger.info(f'Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1} ({obs_str}) 收盤{u.latest_price:.2f} >= KO{ko_price_month:.2f}')
                                 break  # 一天只會匹配一個比價日
 
-                        # ── 一般 FCN: 以 ko_obs_start 為 KO 觀察起點 ──
-                        elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.ko_obs_start:
-                            if today >= p.ko_obs_start:
+                        # ── 一般 FCN: start_date = 比價日 = KO 觀察起始日 ──
+                        elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
+                            if today >= p.start_date:
                                 if u.latest_price >= u.ko_level:
                                     u.ko_hit = True
                     except Exception:
@@ -922,7 +999,7 @@ def delete_client(cid):
 @app.route('/products')
 @login_required
 def products():
-    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=current_uid()).order_by(Product.trade_date, Product.created_at).all()
     ko_done = Product.query.filter_by(status='ko_exited', user_id=current_uid()).order_by(Product.created_at.desc()).all()
     matured = Product.query.filter_by(status='matured', user_id=current_uid()).order_by(Product.created_at.desc()).all()
     # 計算持倉總金額（分幣別）
@@ -1204,7 +1281,7 @@ def briefing():
     today = date.today()
     uid = current_uid()
 
-    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.created_at).all()
+    active = Product.query.filter_by(status='active', user_id=uid).order_by(Product.trade_date, Product.created_at).all()
 
     # 即將到期（30天內）
     expiring = [p for p in active if p.maturity_date and p.days_to_maturity is not None and 0 <= p.days_to_maturity <= 30]
