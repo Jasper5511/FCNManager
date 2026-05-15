@@ -43,6 +43,7 @@ with app.app_context():
             ('ko_start_pct', 'FLOAT'),
             ('ko_stepdown_pct', 'FLOAT'),
             ('observation_dates', 'TEXT'),
+            ('ko_observe_start', 'DATE'),
         ]:
             if col_name not in prod_cols:
                 conn.execute(text(f'ALTER TABLE products ADD COLUMN {col_name} {col_def}'))
@@ -64,6 +65,25 @@ with app.app_context():
                 except Exception:
                     pass
             app.logger.info('已修正 PostgreSQL ID 序列')
+
+# 一次性修正：2026SN2301 比價日 ≠ KO 觀察起始日（每日觀察 + 閉鎖期到 6/15）
+with app.app_context():
+    try:
+        from datetime import date as _date
+        for _p in Product.query.filter_by(product_code='2026SN2301').all():
+            patched = False
+            if not _p.ko_observe_start:
+                _p.ko_observe_start = _date(2026, 6, 15)
+                patched = True
+            if patched:
+                for _u in _p.underlyings:
+                    _u.ko_hit = False
+                    _u.ko_hit_date = None
+                db.session.commit()
+                app.logger.info(f'已修正 2026SN2301 ko_observe_start + 清除錯標 KO (pid={_p.id})')
+    except Exception as _e:
+        db.session.rollback()
+        app.logger.warning(f'修正 2026SN2301 失敗: {_e}')
 
 # ── 初始化 LINE Bot ──────────────────────────────────────────────────────────
 from line_bot import init_line, is_configured as line_is_configured
@@ -144,9 +164,9 @@ def _setup_scheduler():
                                                 u.ko_hit_date = obs_d
                                                 app.logger.info(f'[排程] Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1}')
                                             break
-                                    # ── 一般 FCN: start_date = 比價日 = KO 觀察起始日 ──
-                                    elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
-                                        if today >= p.start_date:
+                                    # ── 一般 FCN: 以 ko_obs_start 為 KO 觀察起點（預設=start_date）──
+                                    elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.ko_obs_start:
+                                        if today >= p.ko_obs_start:
                                             if u.latest_price >= u.ko_level:
                                                 u.ko_hit = True
                                 except Exception:
@@ -663,9 +683,9 @@ def _maybe_bg_update(uid, active):
                             if u.ticker in prices:
                                 u.latest_price = prices[u.ticker]
                                 u.price_date = price_date
-                            # 一般 FCN: start_date = 比價日 = KO 觀察起始日
-                            if p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
-                                if today >= p.start_date:
+                            # 一般 FCN: 以 ko_obs_start 為 KO 觀察起點
+                            if p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.ko_obs_start:
+                                if today >= p.ko_obs_start:
                                     if u.latest_price >= u.ko_level:
                                         u.ko_hit = True
                         except Exception:
@@ -696,11 +716,11 @@ def dashboard():
         active = Product.query.filter_by(status='active', user_id=current_uid()).all()
 
     # 一般 FCN: 根據最新收盤價自動更新 KO 狀態
-    # start_date = 比價日 = KO 觀察起始日（含當日）
+    # 以 ko_obs_start 為 KO 觀察起點（預設=start_date 比價日）
     today = date.today()
     ko_changed = False
     for p in active:
-        if p.ko_type != 'stepdown' and p.start_date and today >= p.start_date:
+        if p.ko_type != 'stepdown' and p.ko_obs_start and today >= p.ko_obs_start:
             for u in p.underlyings:
                 if u.ko_level and u.latest_price and not u.ko_hit:
                     if u.latest_price >= u.ko_level:
@@ -822,9 +842,9 @@ def fetch_prices():
                                     app.logger.info(f'Stepdown KO 鎖定: {p.product_code} {u.ticker} 月{idx+1} ({obs_str}) 收盤{u.latest_price:.2f} >= KO{ko_price_month:.2f}')
                                 break  # 一天只會匹配一個比價日
 
-                        # ── 一般 FCN: start_date = 比價日 = KO 觀察起始日 ──
-                        elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.start_date:
-                            if today >= p.start_date:
+                        # ── 一般 FCN: 以 ko_obs_start 為 KO 觀察起點 ──
+                        elif p.ko_type != 'stepdown' and u.ko_level and u.latest_price and p.ko_obs_start:
+                            if today >= p.ko_obs_start:
                                 if u.latest_price >= u.ko_level:
                                     u.ko_hit = True
                     except Exception:

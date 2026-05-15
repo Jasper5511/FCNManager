@@ -51,7 +51,8 @@ class Product(db.Model):
     currency       = db.Column(db.String(5), default='USD')
     coupon_rate    = db.Column(db.Float)                          # 0.12 = 12%
     trade_date     = db.Column(db.Date)
-    start_date     = db.Column(db.Date)                          # 比價日
+    start_date     = db.Column(db.Date)                          # 比價日（觀察起始日）
+    ko_observe_start = db.Column(db.Date)                        # KO 觀察起始日；None 時 fallback 為 start_date
     maturity_date  = db.Column(db.Date)                          # 期末訂價日
     ko_pct         = db.Column(db.Float)                         # 1.00 = 100%
     strike_pct     = db.Column(db.Float)
@@ -83,11 +84,17 @@ class Product(db.Model):
         return len(uls) > 0 and all(u.ko_hit for u in uls)
 
     @property
+    def ko_obs_start(self):
+        """KO 觀察起始日：優先用 ko_observe_start，否則 fallback 到 start_date（比價日）"""
+        return self.ko_observe_start or self.start_date
+
+    @property
     def is_ko_observing(self):
-        """今天是否已進入 KO 觀察期（start_date = 比價日 = KO 觀察起始日）"""
-        if not self.start_date:
+        """今天是否已進入 KO 觀察期"""
+        d = self.ko_obs_start
+        if not d:
             return False
-        return date.today() >= self.start_date
+        return date.today() >= d
 
     @property
     def next_payment(self):
