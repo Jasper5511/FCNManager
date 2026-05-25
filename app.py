@@ -1273,6 +1273,153 @@ def api_add_client():
     return jsonify({'id': c.id, 'name': c.name_masked})
 
 
+# ── API：每日持倉摘要（給外部排程系統呼叫，如「客戶日報系統」） ──────────────
+@app.route('/api/daily_summary')
+def api_daily_summary():
+    """以 token 認證，回傳指定 user 的 FCN 持倉摘要 JSON。
+    用途：給「客戶日報系統」每日 06:30 抓取，整合進個人 briefing email。
+
+    參數：
+      - token    必填，需與 env DAILY_SUMMARY_TOKEN 相符
+
+    回傳的 user 由伺服器 env DAILY_SUMMARY_USERNAME 決定（預設 'admin'）。
+    URL 不接受 ?username= 覆寫，避免 token 外洩時被拿去查其他帳號。
+    此 endpoint 為「唯讀」，不會修改任何資料。
+
+    回傳：
+      {
+        "as_of": "YYYY-MM-DD",
+        "user": "admin",
+        "active_count": int,
+        "near_ko_threshold_pct": -3.0,
+        "expiring_soon_days": 14,
+        "upcoming_payment_days": 7,
+        "summary": {
+          "near_ko":          [{product_code, ticker, distance_pct, latest_price, ko_level, price_date}, ...],
+          "expiring_soon":    [{product_code, days_to_maturity, maturity_date}, ...],
+          "upcoming_payments": [{product_code, period, days_to, payment_date, monthly_coupon_per_position}, ...],
+          "yesterday_ko":     [{product_code, ticker, price, ko_level, ko_hit_date}, ...],
+          "yesterday_matured":[{product_code, maturity_date}, ...],
+          "overdue":          [{product_code, days_overdue, maturity_date}, ...]
+        }
+      }
+    """
+    import os, json as _json2
+
+    expected_token = os.environ.get('DAILY_SUMMARY_TOKEN', '')
+    if not expected_token:
+        return jsonify({'error': 'DAILY_SUMMARY_TOKEN 未設定於伺服器環境變數'}), 503
+    if request.args.get('token', '') != expected_token:
+        return jsonify({'error': 'unauthorized'}), 401
+
+    # 鎖死只能讀 env 指定的帳號（預設 admin），不接受 URL 覆寫
+    username = os.environ.get('DAILY_SUMMARY_USERNAME', 'admin')
+    user = AppUser.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': f'伺服器設定的 username 不存在: {username}'}), 404
+
+    # 取「最近一個美股交易日」收盤判定
+    from daily_report import _get_last_us_trading_day, _is_ko_relevant_today
+    last_td = _get_last_us_trading_day()
+    today = date.today()
+
+    active = (Product.query
+              .filter_by(status='active', user_id=user.id)
+              .order_by(Product.trade_date, Product.created_at)
+              .all())
+
+    near_ko, expiring_soon, upcoming_payments = [], [], []
+    yesterday_ko, yesterday_matured, overdue = [], [], []
+
+    for p in active:
+        code = p.product_code or '?'
+
+        # 接近 KO（≤3% 且尚未鎖定、且今天會比 KO）
+        if _is_ko_relevant_today(p):
+            for u in sorted(p.underlyings, key=lambda x: x.position_order or 0):
+                if not u.latest_price or not u.ko_level or u.ko_hit:
+                    continue
+                dist = u.latest_price / u.ko_level - 1
+                if -0.03 <= dist < 0:
+                    near_ko.append({
+                        'product_code': code,
+                        'ticker': u.ticker,
+                        'distance_pct': round(dist * 100, 2),
+                        'latest_price': round(u.latest_price, 2),
+                        'ko_level': round(u.ko_level, 2),
+                        'price_date': u.price_date.isoformat() if u.price_date else None,
+                    })
+
+        # 即將到期（1-14 天）
+        if p.maturity_date and p.days_to_maturity is not None:
+            if 1 <= p.days_to_maturity <= 14:
+                expiring_soon.append({
+                    'product_code': code,
+                    'days_to_maturity': p.days_to_maturity,
+                    'maturity_date': p.maturity_date.isoformat(),
+                })
+            elif p.days_to_maturity < 0:
+                overdue.append({
+                    'product_code': code,
+                    'days_overdue': abs(p.days_to_maturity),
+                    'maturity_date': p.maturity_date.isoformat(),
+                })
+
+        # 昨日達 KO（任一標的 ko_hit_date == 最近交易日）
+        for u in p.underlyings:
+            if u.ko_hit and u.ko_hit_date == last_td:
+                yesterday_ko.append({
+                    'product_code': code,
+                    'ticker': u.ticker,
+                    'price': round(u.latest_price, 2) if u.latest_price else None,
+                    'ko_level': round(u.ko_level, 2) if u.ko_level else None,
+                    'ko_hit_date': last_td.isoformat(),
+                })
+
+        # 昨日到期
+        if p.maturity_date == last_td:
+            yesterday_matured.append({
+                'product_code': code,
+                'maturity_date': p.maturity_date.isoformat(),
+            })
+
+        # 即將配息（7 天內，含當天）
+        for s in p.payment_schedule:
+            if s.payment_date and 0 <= (s.payment_date - today).days <= 7:
+                # 取 position 1 美金的月配息（給排程系統當參考）
+                monthly_rate = (p.coupon_rate / 12) if p.coupon_rate else None
+                upcoming_payments.append({
+                    'product_code': code,
+                    'period': s.period,
+                    'days_to': (s.payment_date - today).days,
+                    'payment_date': s.payment_date.isoformat(),
+                    'monthly_coupon_per_usd': round(monthly_rate, 6) if monthly_rate else None,
+                })
+
+    # 排序
+    near_ko.sort(key=lambda x: x['distance_pct'])               # 最接近 KO 在前
+    expiring_soon.sort(key=lambda x: x['days_to_maturity'])     # 最快到期在前
+    upcoming_payments.sort(key=lambda x: x['days_to'])          # 最近配息在前
+
+    return jsonify({
+        'as_of': today.isoformat(),
+        'last_trading_day': last_td.isoformat(),
+        'user': username,
+        'active_count': len(active),
+        'near_ko_threshold_pct': -3.0,
+        'expiring_soon_days': 14,
+        'upcoming_payment_days': 7,
+        'summary': {
+            'near_ko': near_ko,
+            'expiring_soon': expiring_soon,
+            'upcoming_payments': upcoming_payments,
+            'yesterday_ko': yesterday_ko,
+            'yesterday_matured': yesterday_matured,
+            'overdue': overdue,
+        },
+    })
+
+
 # ── 每日晨會快報 ─────────────────────────────────────────────────────────────
 @app.route('/briefing')
 @login_required
