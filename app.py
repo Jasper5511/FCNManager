@@ -1474,6 +1474,129 @@ def api_daily_summary():
     })
 
 
+# ── API：FCN 售後事件（C 模組：配息 / 到期 / KO 接股票） ───────────────────
+@app.route('/api/aftercare_events')
+def api_aftercare_events():
+    """以 token 認證，回傳今日該追蹤的 FCN 售後事件 + 涉及客戶名單。
+
+    事件規則：
+      - payment: 明天配息 (d=1) 或今天配息 (d=0)
+      - maturity: 7 天內到期（天天提醒）
+      - ko: 昨日達 KO（接股票流程啟動）
+
+    user 鎖定 DAILY_SUMMARY_USERNAME（預設 admin），URL 不接受覆寫。
+    """
+    import os
+    expected = os.environ.get('DAILY_SUMMARY_TOKEN', '')
+    if not expected:
+        return jsonify({'error': 'DAILY_SUMMARY_TOKEN 未設定'}), 503
+    if request.args.get('token', '') != expected:
+        return jsonify({'error': 'unauthorized'}), 401
+
+    username = os.environ.get('DAILY_SUMMARY_USERNAME', 'admin')
+    user = AppUser.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': f'username 不存在: {username}'}), 404
+
+    from daily_report import _get_last_us_trading_day
+    last_td = _get_last_us_trading_day()
+    today = date.today()
+
+    active = (Product.query
+              .filter_by(status='active', user_id=user.id)
+              .order_by(Product.trade_date, Product.created_at)
+              .all())
+
+    def _client_brief(pos):
+        return {
+            'client_id': pos.client.id,
+            'name_masked': pos.client.name_masked,
+            'amount': pos.investment_amount,
+            'currency': pos.product.currency or 'USD',
+            'tags': pos.client.tags_list,
+            'risk_profile': pos.client.risk_profile,
+        }
+
+    payment_events, maturity_events, ko_events = [], [], []
+
+    for p in active:
+        code = p.product_code or '?'
+
+        # 配息：明天 (1) 或今天 (0)
+        for s in p.payment_schedule:
+            if not s.payment_date:
+                continue
+            d = (s.payment_date - today).days
+            if d in (0, 1):
+                clients = []
+                for pos in p.positions:
+                    if not pos.client:
+                        continue
+                    cb = _client_brief(pos)
+                    if p.coupon_rate and pos.investment_amount:
+                        cb['estimated_coupon'] = round(pos.investment_amount * p.coupon_rate / 12, 2)
+                    clients.append(cb)
+                payment_events.append({
+                    'type': 'payment',
+                    'product_code': code,
+                    'event_date': s.payment_date.isoformat(),
+                    'days_to': d,  # 0=今天, 1=明天
+                    'when_label': '今天' if d == 0 else '明天',
+                    'period': s.period,
+                    'total_periods': p.total_periods,
+                    'coupon_rate_annual': p.coupon_rate,
+                    'clients': clients,
+                })
+
+        # 到期：7 天內，天天提醒
+        if p.maturity_date and p.days_to_maturity is not None and 0 <= p.days_to_maturity <= 7:
+            clients = [_client_brief(pos) for pos in p.positions if pos.client]
+            maturity_events.append({
+                'type': 'maturity',
+                'product_code': code,
+                'event_date': p.maturity_date.isoformat(),
+                'days_to_maturity': p.days_to_maturity,
+                'when_label': f'{p.days_to_maturity} 天後' if p.days_to_maturity > 0 else '今天',
+                'paid_periods': p.paid_count,
+                'total_periods': p.total_periods,
+                'clients': clients,
+            })
+
+        # KO：昨日達 KO
+        ko_tickers = []
+        for u in p.underlyings:
+            if u.ko_hit and u.ko_hit_date == last_td:
+                ko_tickers.append({
+                    'ticker': u.ticker,
+                    'ko_price': round(u.latest_price, 2) if u.latest_price else None,
+                    'ko_level': round(u.ko_level, 2) if u.ko_level else None,
+                })
+        if ko_tickers:
+            clients = [_client_brief(pos) for pos in p.positions if pos.client]
+            ko_events.append({
+                'type': 'ko',
+                'product_code': code,
+                'event_date': last_td.isoformat(),
+                'when_label': '昨日',
+                'ko_tickers': ko_tickers,
+                'strike_pct': p.strike_pct,
+                'clients': clients,
+            })
+
+    payment_events.sort(key=lambda x: x['days_to'])
+    maturity_events.sort(key=lambda x: x['days_to_maturity'])
+
+    return jsonify({
+        'as_of': today.isoformat(),
+        'last_trading_day': last_td.isoformat(),
+        'user': username,
+        'total_events': len(payment_events) + len(maturity_events) + len(ko_events),
+        'payment_events': payment_events,
+        'maturity_events': maturity_events,
+        'ko_events': ko_events,
+    })
+
+
 # ── API：今日該主動聯絡的客戶（B 模組） ──────────────────────────────────────
 # 「Ticker → 對應主題」對照表，用於依持倉自動加分
 _TICKER_THEMES = {
