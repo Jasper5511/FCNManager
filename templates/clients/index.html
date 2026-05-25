@@ -18,10 +18,10 @@
         <thead>
             <tr>
                 <th>客戶姓名</th>
-                <th class="text-center">持倉中</th>
-                <th class="text-center">已出場/到期</th>
+                <th class="text-center">風險屬性</th>
+                <th>興趣主題</th>
+                <th class="text-center">持倉</th>
                 <th>目前部位</th>
-                <th>歷史紀錄</th>
                 <th class="text-center">操作</th>
             </tr>
         </thead>
@@ -29,8 +29,30 @@
         {% for c in clients %}
         <tr data-client-row>
             <td class="fw-bold">{{ c.name_masked }}</td>
-            <td class="text-center">{{ c.positions|selectattr('product.status', 'equalto', 'active')|list|length }}</td>
-            <td class="text-center">{{ c.positions|rejectattr('product.status', 'equalto', 'active')|list|length }}</td>
+            <td class="text-center">
+                {% if c.risk_profile %}
+                    {% set rp_color = {'保守': 'success', '穩健': 'info', '積極': 'warning'} %}
+                    <span class="badge bg-{{ rp_color.get(c.risk_profile, 'secondary') }}" style="font-size:0.75rem;">{{ c.risk_profile }}</span>
+                {% else %}
+                    <span class="text-muted" style="font-size:0.85rem;">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if c.tags_list %}
+                    {% for t in c.tags_list %}
+                        <span class="badge bg-light text-dark me-1" style="font-size:0.72rem; border: 1px solid #ddd;">{{ t }}</span>
+                    {% endfor %}
+                {% else %}
+                    <span class="text-muted" style="font-size:0.85rem;">尚未分群</span>
+                {% endif %}
+            </td>
+            <td class="text-center">
+                <span class="badge bg-primary">{{ c.positions|selectattr('product.status', 'equalto', 'active')|list|length }}</span>
+                {% set inactive_count = c.positions|rejectattr('product.status', 'equalto', 'active')|list|length %}
+                {% if inactive_count > 0 %}
+                    <span class="badge bg-secondary">{{ inactive_count }} 已結</span>
+                {% endif %}
+            </td>
             <td>
                 {% for pos in c.positions if pos.product.status == 'active' %}
                     <span class="badge bg-primary me-1" style="font-size:0.72rem;">
@@ -38,15 +60,8 @@
                     </span>
                 {% endfor %}
             </td>
-            <td>
-                {% for pos in c.positions if pos.product.status != 'active' %}
-                    <span class="badge bg-secondary me-1" style="font-size:0.72rem;">
-                        {{ pos.product.product_code }}
-                        {% if pos.product.status == 'ko_exited' %}(KO){% else %}(到期){% endif %}
-                    </span>
-                {% endfor %}
-            </td>
             <td class="text-center">
+                <a href="/clients/{{ c.id }}/edit" class="btn btn-outline-primary btn-sm">編輯</a>
                 <form action="/clients/{{ c.id }}/delete" method="POST" class="d-inline" data-confirm="確認刪除客戶 {{ c.name_masked }}？">
                     <button type="submit" class="btn btn-outline-danger btn-sm">刪除</button>
                 </form>

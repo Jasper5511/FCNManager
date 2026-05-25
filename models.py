@@ -26,18 +26,32 @@ class AppUser(db.Model):
 
 class Client(db.Model):
     __tablename__ = 'clients'
-    id          = db.Column(db.Integer, primary_key=True)
-    user_id     = db.Column(db.Integer, db.ForeignKey('app_users.id'))
-    name        = db.Column(db.String(50), nullable=False)       # 何小名
-    name_masked = db.Column(db.String(50), nullable=False)       # 何O名
-    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
-    positions   = db.relationship('Position', back_populates='client', lazy=True)
+    id            = db.Column(db.Integer, primary_key=True)
+    user_id       = db.Column(db.Integer, db.ForeignKey('app_users.id'))
+    name          = db.Column(db.String(50), nullable=False)       # 何小名
+    name_masked   = db.Column(db.String(50), nullable=False)       # 何O名
+    risk_profile  = db.Column(db.String(20))                       # 保守 / 穩健 / 積極
+    tags          = db.Column(db.Text)                             # JSON list: ["半導體","收息"]
+    notes         = db.Column(db.Text)                             # 備註（理專自己看）
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    positions     = db.relationship('Position', back_populates='client', lazy=True)
 
     @staticmethod
     def mask_name(name):
         if not name or len(name) < 2:
             return name
         return name[0] + 'O' + name[2:]
+
+    @property
+    def tags_list(self):
+        """tags JSON 字串 → list"""
+        if not self.tags:
+            return []
+        try:
+            import json
+            return json.loads(self.tags)
+        except Exception:
+            return []
 
 
 class Product(db.Model):

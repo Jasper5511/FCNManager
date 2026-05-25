@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-header">
+    <h5>編輯客戶分群 — {{ client.name_masked }}</h5>
+    <div class="page-actions">
+        <a href="/clients" class="btn btn-outline-secondary btn-sm">返回</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST">
+            <div class="mb-4">
+                <label class="form-label fw-bold">風險屬性</label>
+                <div class="d-flex gap-3">
+                    {% for rp in all_risk_profiles %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="risk_profile" id="rp_{{ rp }}"
+                               value="{{ rp }}" {% if client.risk_profile == rp %}checked{% endif %}>
+                        <label class="form-check-label" for="rp_{{ rp }}">{{ rp }}</label>
+                    </div>
+                    {% endfor %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="risk_profile" id="rp_none"
+                               value="" {% if not client.risk_profile %}checked{% endif %}>
+                        <label class="form-check-label text-muted" for="rp_none">未設定</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label fw-bold">興趣主題（可複選）</label>
+                <div class="d-flex flex-wrap gap-2">
+                    {% for tag in all_tags %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="tags" id="tag_{{ loop.index }}"
+                               value="{{ tag }}" {% if tag in selected_tags %}checked{% endif %}>
+                        <label class="form-check-label" for="tag_{{ loop.index }}">
+                            <span class="badge bg-light text-dark" style="font-size:0.85rem;">{{ tag }}</span>
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <small class="text-muted mt-2 d-block">系統會依今日市場主題比對 tag，自動排出你今天該聯絡的前 5 位客戶。</small>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label fw-bold">備註（理專自己看）</label>
+                <textarea name="notes" rows="3" class="form-control"
+                          placeholder="例如：偏好台幣計價、不愛科技股、近期想換房...">{{ client.notes or '' }}</textarea>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">儲存</button>
+                <a href="/clients" class="btn btn-outline-secondary">取消</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

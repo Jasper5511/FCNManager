@@ -54,6 +54,17 @@ with app.app_context():
             conn.execute(text('ALTER TABLE underlyings ADD COLUMN ko_hit_date DATE'))
             conn.commit()
             app.logger.info('已自動新增 underlyings.ko_hit_date 欄位')
+        # Clients 表新增 B 模組欄位（客戶分群+個人化）
+        client_cols = [c['name'] for c in insp.get_columns('clients')]
+        for col_name, col_def in [
+            ('risk_profile', 'VARCHAR(20)'),
+            ('tags', 'TEXT'),
+            ('notes', 'TEXT'),
+        ]:
+            if col_name not in client_cols:
+                conn.execute(text(f'ALTER TABLE clients ADD COLUMN {col_name} {col_def}'))
+                conn.commit()
+                app.logger.info(f'已自動新增 clients.{col_name} 欄位')
         # PostgreSQL: 修正 ID 序列不同步
         db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
         if 'postgresql' in db_uri:
@@ -995,6 +1006,49 @@ def delete_client(cid):
     return redirect(url_for('clients'))
 
 
+# B 模組：預定義 tag 與風險屬性選項
+CLIENT_TAGS = [
+    '半導體', 'AI 科技', '美股成長', '高股息', '收息固收',
+    '債券', '醫療生技', '能源原物料', '金融', 'ESG',
+]
+CLIENT_RISK_PROFILES = ['保守', '穩健', '積極']
+
+
+@app.route('/clients/<int:cid>/edit', methods=['GET', 'POST'])
+@login_required
+def edit_client(cid):
+    """編輯客戶分群資料：tags / risk_profile / notes（給 B 模組用）"""
+    import json as _json3
+    c = Client.query.get_or_404(cid)
+    if c.user_id != current_uid():
+        abort(403)
+
+    if request.method == 'POST':
+        # tags 從 multi-checkbox 來
+        selected_tags = request.form.getlist('tags')
+        valid_tags = [t for t in selected_tags if t in CLIENT_TAGS]
+        c.tags = _json3.dumps(valid_tags, ensure_ascii=False) if valid_tags else None
+
+        rp = request.form.get('risk_profile', '').strip()
+        c.risk_profile = rp if rp in CLIENT_RISK_PROFILES else None
+
+        notes = request.form.get('notes', '').strip()
+        c.notes = notes or None
+
+        db.session.commit()
+        log_activity(f'編輯客戶分群：{c.name_masked} tags={valid_tags} risk={rp}')
+        flash(f'已更新 {c.name_masked} 的分群資料', 'success')
+        return redirect(url_for('clients'))
+
+    return render_template(
+        'clients/edit.html',
+        client=c,
+        all_tags=CLIENT_TAGS,
+        all_risk_profiles=CLIENT_RISK_PROFILES,
+        selected_tags=c.tags_list,
+    )
+
+
 # ── 商品管理 ──────────────────────────────────────────────────────────────────
 @app.route('/products')
 @login_required
@@ -1417,6 +1471,168 @@ def api_daily_summary():
             'yesterday_matured': yesterday_matured,
             'overdue': overdue,
         },
+    })
+
+
+# ── API：今日該主動聯絡的客戶（B 模組） ──────────────────────────────────────
+# 「Ticker → 對應主題」對照表，用於依持倉自動加分
+_TICKER_THEMES = {
+    # 半導體
+    'NVDA': ['半導體', 'AI 科技'],
+    'AMD':  ['半導體', 'AI 科技'],
+    'AVGO': ['半導體', 'AI 科技'],
+    'TSM':  ['半導體'],
+    'INTC': ['半導體'],
+    'MU':   ['半導體'],
+    'AMAT': ['半導體'],
+    'ASML': ['半導體'],
+    'ARM':  ['半導體', 'AI 科技'],
+    'SMCI': ['半導體', 'AI 科技'],
+    'QCOM': ['半導體'],
+    # AI / 科技龍頭
+    'GOOGL': ['AI 科技', '美股成長'],
+    'GOOG':  ['AI 科技', '美股成長'],
+    'META':  ['AI 科技', '美股成長'],
+    'MSFT':  ['AI 科技', '美股成長'],
+    'AAPL':  ['AI 科技', '美股成長'],
+    'AMZN':  ['AI 科技', '美股成長'],
+    'ORCL':  ['AI 科技'],
+    'CRM':   ['AI 科技'],
+    'HPE':   ['AI 科技'],
+    'DELL':  ['AI 科技'],
+    # 美股成長
+    'TSLA':  ['美股成長'],
+    'NFLX':  ['美股成長'],
+    # 金融
+    'JPM':   ['金融'], 'BAC': ['金融'], 'GS': ['金融'], 'WFC': ['金融'],
+    'MA':    ['金融'], 'V':   ['金融'],
+    # 醫療生技
+    'JNJ':   ['醫療生技'], 'PFE': ['醫療生技'], 'MRK': ['醫療生技'],
+    'LLY':   ['醫療生技'], 'UNH': ['醫療生技'],
+    # 能源原物料
+    'XOM':   ['能源原物料'], 'CVX': ['能源原物料'], 'COP': ['能源原物料'],
+}
+
+
+@app.route('/api/contact_suggestions')
+def api_contact_suggestions():
+    """以 token 認證，依今日主題比對 admin 客戶，回傳前 N 位推薦聯絡客戶。
+
+    參數：
+      - token  必填，需與 env DAILY_SUMMARY_TOKEN 相符
+      - themes 必填，逗號分隔主題清單，如 "半導體,收息"
+      - limit  可選，預設 5
+
+    回傳每位客戶含：name_masked、risk_profile、tags、持倉摘要、score、match_reasons。
+    user 由 DAILY_SUMMARY_USERNAME 決定，URL 不接受覆寫。
+    """
+    import os, json as _json4
+
+    expected = os.environ.get('DAILY_SUMMARY_TOKEN', '')
+    if not expected:
+        return jsonify({'error': 'DAILY_SUMMARY_TOKEN 未設定'}), 503
+    if request.args.get('token', '') != expected:
+        return jsonify({'error': 'unauthorized'}), 401
+
+    themes_str = request.args.get('themes', '').strip()
+    themes = [t.strip() for t in themes_str.split(',') if t.strip()]
+    if not themes:
+        return jsonify({'error': '請帶 themes 參數，如 ?themes=半導體,收息'}), 400
+
+    limit = min(int(request.args.get('limit', 5)), 20)
+    username = os.environ.get('DAILY_SUMMARY_USERNAME', 'admin')
+    user = AppUser.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({'error': f'username 不存在: {username}'}), 404
+
+    # 風險屬性 → 主題傾向（軟性加分）
+    rp_theme_affinity = {
+        '積極': {'半導體', 'AI 科技', '美股成長'},
+        '穩健': {'美股成長', '高股息', '金融', '醫療生技'},
+        '保守': {'收息固收', '債券', '高股息'},
+    }
+
+    today = date.today()
+    suggestions = []
+
+    for c in Client.query.filter_by(user_id=user.id).all():
+        score = 0
+        reasons = []
+
+        # Tag 直接命中
+        client_tags = set(c.tags_list)
+        for theme in themes:
+            if theme in client_tags:
+                score += 3
+                reasons.append(f'tag:{theme}')
+
+        # 持倉 ticker → 主題 → 命中
+        active_positions = [p for p in c.positions if p.product.status == 'active']
+        position_tickers = set()
+        for pos in active_positions:
+            for u in pos.product.underlyings:
+                position_tickers.add(u.ticker.upper())
+
+        for ticker in position_tickers:
+            ticker_themes = set(_TICKER_THEMES.get(ticker, []))
+            hit = ticker_themes & set(themes)
+            if hit:
+                score += 2
+                for theme in hit:
+                    reasons.append(f'持有 {ticker}（{theme}）')
+
+        # 即將配息 / 即將到期（時效性加分）
+        for pos in active_positions:
+            p = pos.product
+            if p.maturity_date:
+                d = (p.maturity_date - today).days
+                if 0 <= d <= 14:
+                    score += 2
+                    reasons.append(f'[{p.product_code}] {d}天後到期')
+            for s in p.payment_schedule:
+                if s.payment_date and 0 <= (s.payment_date - today).days <= 7:
+                    score += 1
+                    reasons.append(f'[{p.product_code}] {(s.payment_date - today).days}天後配息')
+                    break
+
+        # 風險屬性 affinity
+        if c.risk_profile and c.risk_profile in rp_theme_affinity:
+            if any(t in rp_theme_affinity[c.risk_profile] for t in themes):
+                score += 1
+                reasons.append(f'風險屬性 {c.risk_profile} 對應主題')
+
+        if score <= 0:
+            continue
+
+        suggestions.append({
+            'client_id': c.id,
+            'client_name_masked': c.name_masked,
+            'risk_profile': c.risk_profile,
+            'tags': c.tags_list,
+            'score': score,
+            'match_reasons': reasons,
+            'positions_summary': [
+                {
+                    'product_code': pos.product.product_code,
+                    'tickers': [u.ticker for u in pos.product.underlyings],
+                    'amount': pos.investment_amount,
+                    'currency': pos.product.currency,
+                }
+                for pos in active_positions
+            ],
+            'notes': c.notes,
+        })
+
+    # 排序 + 取前 N
+    suggestions.sort(key=lambda x: x['score'], reverse=True)
+    suggestions = suggestions[:limit]
+
+    return jsonify({
+        'as_of': today.isoformat(),
+        'user': username,
+        'themes_received': themes,
+        'total_matched': len(suggestions),
+        'suggestions': suggestions,
     })
 
 
