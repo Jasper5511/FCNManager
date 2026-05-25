@@ -965,6 +965,29 @@ def backup_drive():
     return redirect(url_for('dashboard'))
 
 
+# ── F 模組：FCN 反對處理庫 ────────────────────────────────────────────────────
+@app.route('/objections')
+@login_required
+@admin_required
+def objections():
+    """FCN 銷售反對處理話術庫（admin 限定）"""
+    import json as _jsonO
+    from pathlib import Path
+    data_path = Path(__file__).parent / 'data' / 'objections.json'
+    try:
+        data = _jsonO.loads(data_path.read_text(encoding='utf-8'))
+    except Exception as e:
+        flash(f'反對處理庫資料讀取失敗：{e}', 'danger')
+        return redirect(url_for('dashboard'))
+
+    return render_template(
+        'objections.html',
+        categories=data.get('categories', []),
+        items=data.get('items', []),
+        version=data.get('version', ''),
+    )
+
+
 # ── 客戶管理 ──────────────────────────────────────────────────────────────────
 @app.route('/clients')
 @login_required

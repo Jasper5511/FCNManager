@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-header">
+    <h5>FCN 反對處理庫 <span class="badge bg-primary nav-badge" style="font-size:0.7rem;">{{ items|length }} 個常見問題</span></h5>
+    <div class="page-actions">
+        <div class="search-bar">
+            <span class="search-icon">&#128269;</span>
+            <input type="text" class="form-control" id="objSearch" placeholder="搜尋問題或關鍵字...">
+        </div>
+    </div>
+</div>
+
+<div class="d-flex flex-wrap gap-2 mb-3" id="catFilter">
+    <button type="button" class="btn btn-sm btn-primary cat-btn active" data-cat="all">全部</button>
+    {% for c in categories %}
+    <button type="button" class="btn btn-sm btn-outline-primary cat-btn" data-cat="{{ c.id }}" title="{{ c.desc }}">
+        {{ c.name }}
+    </button>
+    {% endfor %}
+</div>
+
+<div class="accordion" id="objAccordion">
+    {% for item in items %}
+    {% set cat = (categories | selectattr('id', 'equalto', item.category) | first) %}
+    <div class="accordion-item obj-item" data-cat="{{ item.category }}"
+         data-text="{{ item.question }} {{ item.client_answer }} {{ item.broker_note or '' }}">
+        <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#obj{{ item.id }}" aria-expanded="false">
+                <span class="badge bg-secondary me-2" style="font-size:0.7rem;">{{ cat.name if cat else item.category }}</span>
+                <strong>Q{{ item.id }}. {{ item.question }}</strong>
+            </button>
+        </h2>
+        <div id="obj{{ item.id }}" class="accordion-collapse collapse" data-bs-parent="#objAccordion">
+            <div class="accordion-body">
+                <div class="mb-3">
+                    <div class="fw-bold text-primary mb-2">給客戶的標準話術</div>
+                    <div class="p-3 rounded" style="background: #f0f7ff; line-height: 1.7;">
+                        {{ item.client_answer }}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary mt-2"
+                            onclick="copyText(`{{ item.client_answer | replace('`','\\`') | replace('\n','\\n') }}`, this)">
+                        複製話術
+                    </button>
+                </div>
+                {% if item.broker_note %}
+                <div>
+                    <div class="fw-bold text-muted mb-2">理專備註（自己看）</div>
+                    <div class="p-3 rounded" style="background: #fff8e6; line-height: 1.6; font-size:0.93rem;">
+                        {{ item.broker_note }}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="text-muted mt-4" style="font-size:0.85rem;">
+    版本：{{ version }}　|　共 {{ items|length }} 個問題　|
+    要新增/編輯話術，請改 <code>data/objections.json</code> 後重新部署
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 分類篩選
+document.querySelectorAll('.cat-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.cat-btn').forEach(b => {
+            b.classList.remove('active', 'btn-primary');
+            b.classList.add('btn-outline-primary');
+        });
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('active', 'btn-primary');
+
+        const cat = btn.dataset.cat;
+        document.querySelectorAll('.obj-item').forEach(item => {
+            item.style.display = (cat === 'all' || item.dataset.cat === cat) ? '' : 'none';
+        });
+    });
+});
+
+// 關鍵字搜尋
+document.getElementById('objSearch').addEventListener('input', (e) => {
+    const kw = e.target.value.toLowerCase().trim();
+    document.querySelectorAll('.obj-item').forEach(item => {
+        const text = item.dataset.text.toLowerCase();
+        item.style.display = (!kw || text.includes(kw)) ? '' : 'none';
+    });
+});
+
+// 複製到剪貼簿
+function copyText(text, btn) {
+    navigator.clipboard.writeText(text).then(() => {
+        const original = btn.innerText;
+        btn.innerText = '已複製 ✓';
+        btn.classList.add('btn-success');
+        btn.classList.remove('btn-outline-primary');
+        setTimeout(() => {
+            btn.innerText = original;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-primary');
+        }, 1500);
+    });
+}
+</script>
+{% endblock %}
