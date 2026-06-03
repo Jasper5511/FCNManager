@@ -155,6 +155,14 @@ with app.app_context():
                 (5, '2026-09-09', '2026-10-07', '2026-10-13'),
                 (6, '2026-10-08', '2026-11-09', '2026-11-13'),
             ],
+            '2026SN3154': [
+                (1, None,         '2026-07-09', '2026-07-14'),
+                (2, '2026-07-10', '2026-08-10', '2026-08-13'),
+                (3, '2026-08-11', '2026-09-09', '2026-09-14'),
+                (4, '2026-09-10', '2026-10-09', '2026-10-15'),
+                (5, '2026-10-12', '2026-11-09', '2026-11-13'),
+                (6, '2026-11-10', '2026-12-09', '2026-12-14'),
+            ],
         }
         for _code, _sched in _SCHEDULES.items():
             for _p in Product.query.filter_by(product_code=_code).all():
@@ -162,7 +170,7 @@ with app.app_context():
                     for _per, _os, _oe, _pd in _sched:
                         db.session.add(PaymentSchedule(
                             product_id=_p.id, period=_per,
-                            obs_start_date=_date.fromisoformat(_os),
+                            obs_start_date=_date.fromisoformat(_os) if _os else None,
                             obs_end_date=_date.fromisoformat(_oe),
                             payment_date=_date.fromisoformat(_pd)))
                     _changed = True
