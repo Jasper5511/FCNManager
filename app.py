@@ -78,6 +78,7 @@ with app.app_context():
 
 # 一次性資料修正：統一 2026 年 active 商品的 special_notes（發行日｜到期日｜ISIN）、
 # 修正 2026SN2301 比價日 = 2026-06-15、補建 2026SN2301 配息排程（套用完成後可移除此區塊）
+# 2026-08-10：觸發 Render 重新部署以套用 2026SN4637 配息排程
 with app.app_context():
     try:
         from datetime import date as _date
